@@ -3,28 +3,46 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-3 complete (service, containerization,
-> Kubernetes Deployment with self-healing and rolling updates).
+> **Status:** in progress. Phases 1-4 complete (service, containerization,
+> Kubernetes Deployment, real-time server-authoritative Pong over WebSockets).
 
 ## Repository layout
 
 ```
-services/game-server/    Node.js + TypeScript game service
+services/game-server/    Node.js + TypeScript game service (HTTP + WebSocket)
+services/web/            React + TypeScript + Vite client
 k8s/                     Kubernetes manifests
 docs/                    Architecture notes, runbooks, learning log
 ```
 
 ## Local development
 
+Two processes. Vite proxies `/ws` and `/config` to the game server, so the
+browser sees a single origin and there is no CORS to configure.
+
 ```bash
-cd services/game-server
-npm install
-PORT=3100 npm run dev
-curl localhost:3100/health
+# terminal 1
+cd services/game-server && npm install && PORT=3100 npm run dev
+
+# terminal 2
+cd services/web && npm install && npm run dev
 ```
+
+Then open <http://localhost:5173> in **two** browser tabs and click
+"Find a match" in each.
 
 Port 3100 is used instead of 3000 because port 3000 is occupied by another
 project on this machine.
+
+## Tests
+
+```bash
+cd services/game-server && npm test
+```
+
+`test/physics.test.mjs` tests the simulation as pure functions (no networking).
+`test/match.test.mjs` drives two bot clients through a real match over
+WebSockets.
 
 ## Docker
 
@@ -68,8 +86,12 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 |--------|------------|-------------------------------------------------------|
 | GET    | `/health`  | `{"status":"ok"}`                                      |
 | GET    | `/whoami`  | `{"instance","uptimeSeconds","version"}` - which replica answered |
+| GET    | `/stats`   | `{"activeGames","rooms","waitingPlayers","connections"}` |
+| GET    | `/config`  | field dimensions the client needs in order to draw |
+| GET    | `/ws`      | WebSocket upgrade - see [protocol](docs/websocket-protocol.md) |
 
 ## Documentation
 
 - [Learning log](docs/learning-log.md) - what was built in each phase and why
+- [WebSocket protocol](docs/websocket-protocol.md)
 - [Architecture decisions](docs/decisions.md)
