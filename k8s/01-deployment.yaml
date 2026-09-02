@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-server
+spec:
+  replicas: 2                  # DESIRED state: always keep 2 Pods alive
+  strategy:
+    type: RollingUpdate        # replace Pods gradually, never all at once
+    rollingUpdate:
+      maxSurge: 1              # may temporarily run 1 EXTRA Pod (so: up to 3)
+      maxUnavailable: 0        # never drop below 2 ready Pods -> zero downtime
+  selector:
+    matchLabels:
+      app: game-server         # which Pods this Deployment considers "mine"
+  template:                    # <-- everything below is the Pod blueprint
+    metadata:
+      labels:
+        app: game-server       # must match the selector above
+    spec:
+      containers:
+        - name: game-server
+          image: pong-game-server:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: APP_VERSION
+              value: "v1"

@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-server        # this name becomes a DNS hostname inside the cluster
+spec:
+  type: ClusterIP          # a stable virtual IP, reachable only inside the cluster
+  selector:
+    app: game-server       # THIS is the link: send traffic to any Pod labelled app=game-server
+  ports:
+    - name: http
+      port: 3000           # the port the Service listens on
+      targetPort: 3000     # the port on the Pod to forward to
+---
+# A second Service, so we can reach the app from the Mac without port-forward.
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-server-nodeport
+spec:
+  type: NodePort           # opens a port on the node itself
+  selector:
+    app: game-server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30080      # must be in the 30000-32767 range
