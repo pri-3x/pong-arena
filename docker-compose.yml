@@ -1,0 +1,17 @@
+# Local development only. This is NOT how we run in Kubernetes - it exists so
+# you can start the backing services on your Mac with one command.
+#
+# Compose and Kubernetes solve overlapping problems, but Compose runs containers
+# on ONE machine with no scheduling, self-healing, or scaling. Kubernetes is the
+# thing we are actually learning; Compose is a convenience for local dev.
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6380:6379"     # 6380 on the Mac -> 6379 in the container
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

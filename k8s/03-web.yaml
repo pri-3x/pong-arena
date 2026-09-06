@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: pong-web:v1
+          image: pong-web:v2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

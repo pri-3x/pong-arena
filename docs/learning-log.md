@@ -198,3 +198,134 @@ pod B /stats: {"activeGames":0,"rooms":0,"connections":0}
 The Service load-balances each new connection to a random Pod, so with 2
 replicas two players have roughly a 50% chance of never meeting. Scaling out
 made the application *worse*. This is what shared state (Redis) fixes.
+
+## Phase 5 - Redis: shared state across replicas
+
+### The problem, restated
+
+At the end of Phase 4, `replicas: 2` broke the game: the matchmaking queue lived
+in one process's memory, so two players routed to different Pods each waited in
+their own queue forever. Scaling out made the application worse.
+
+Two separate things had to be fixed, and they are worth keeping distinct:
+
+1. **Finding an opponent** - needs *shared state*. Solved by Redis.
+2. **Playing the match** - needs the two players' sockets, which live on
+   different Pods, to reach the one process running the simulation. Solved by
+   Redis pub/sub messaging.
+
+Only the first one is what people usually mean by "add Redis". The second is the
+harder half.
+
+### Atomic matchmaking
+
+The queue is a Redis list. The operation "take an opponent, or queue myself" must
+be atomic:
+
+```lua
+local opponent = redis.call('RPOP', KEYS[1])
+if opponent then return opponent end
+redis.call('LPUSH', KEYS[1], ARGV[1])
+return false
+```
+
+Done as two separate commands (RPOP then LPUSH) there is a race: two players can
+both RPOP nothing, then both LPUSH, and end up queued behind each other having
+never matched. Redis executes a Lua script as a single atomic unit.
+
+### Room ownership and the message bus
+
+Whichever Pod completes the match **owns** the room and runs the simulation.
+The other Pod holds a socket and acts as a relay:
+
+```
+  player A                                        player B
+     |                                               |
+     v                                               v
+  pod-A  --- input via pod:<owner>:input --->  pod-B (OWNER)
+     ^                                          | runs the 60Hz loop
+     +------ state via pod:<pod-A>:msg ---------+
+```
+
+Each Pod subscribes to exactly **two** channels named after itself, not one
+channel per room. Rooms are created and destroyed constantly; churning
+SUBSCRIBE/UNSUBSCRIBE per match would be far more work than filtering two
+channels in application code.
+
+The key design detail is that `Room` never learns any of this. A player is just
+`{ id, name, side, send }`. For a local player `send` writes to a socket; for a
+remote player `send` publishes to Redis. One function pointer is the entire
+difference.
+
+**Pub/sub is fire-and-forget.** If nobody is subscribed when a message is
+published, it is dropped. That is fine for paddle input and state snapshots
+(another arrives in 33 ms). It would NOT be acceptable for "save this match
+result", which is why Phase 7 will use PostgreSQL for that.
+
+### Presence via TTL
+
+Each Pod writes `presence:<pod>` every 2 s with a 10 s expiry. Nothing has to
+clean up after a crashed Pod - it stops refreshing and Redis deletes the key.
+TTL-as-liveness is far more robust than trying to detect crashes and delete
+records explicitly.
+
+Aggregation uses SCAN, not KEYS. KEYS walks the whole keyspace in one blocking
+operation and stalls every other client; SCAN does the same work in small
+interruptible batches.
+
+### Verification
+
+The same cross-pod test that failed in Phase 4, run against two real Pods:
+
+```
+PASS  joining enqueues the player (0 -> 1)
+PASS  disconnecting removes the ticket (1 -> 0)
+PASS  players are on different instances (...-hj872 vs ...-qgxcd)
+PASS  both joined the same room (197949c4)
+PASS  they got opposite sides (left / right)
+PASS  both received state updates
+PASS  BOTH paddles responded to input across pods {"left":-186,"right":-186}
+PASS  both clients see the same world
+PASS  cluster reports 2 live pods
+PASS  cluster sees 2 more players online
+PASS  cluster sees 1 more active game
+PASS  both pods give the same cluster-wide answer
+```
+
+The intermediate broken state was observed deliberately. With the Redis queue in
+place but input forwarding still missing, a cross-pod match ran and rendered
+correctly for both players, but one paddle was dead:
+
+```
+paddle movement: {"left":0,"right":-186}     <- left player was holding UP
+```
+
+After adding input forwarding: `{"left":-186,"right":-186}`.
+
+### Failure testing (preview of Phase 16)
+
+**Graceful Pod deletion** (`kubectl delete pod`) is handled correctly. SIGTERM
+runs our shutdown handler, the socket closes, the room awards the win to the
+remaining player, and the `end` message reaches them over Redis:
+
+```
+p1 (surviving pod): msgs=[waiting,matched,start,score,score,end]  closed=false
+p2 (dying pod):     msgs=[matched,start,score,score]              closed=true
+```
+
+**Hard failure** (`--force --grace-period=0`) is NOT handled:
+
+```
+p1 (surviving pod): msgs=[waiting,matched,start]  closed=false  msSinceState=8432
+p2 (dying pod):     msgs=[matched,start]          closed=true
+```
+
+The surviving player is stranded: their socket stays open, state updates simply
+stop, and they never learn the match is over. **Known limitation.** The fix is a
+room heartbeat in Redis plus client-side stall detection, which we will build in
+Phase 16 rather than pretending it already works.
+
+**Incidental finding:** `kubectl exec <pod> -- kill -9 1` does nothing. The Linux
+kernel refuses signals to PID 1 from inside its own PID namespace unless the
+process installed a handler, and SIGKILL cannot be handled. The Pod stayed
+`Running` with `RESTARTS 0`. To simulate a hard crash, force-delete the Pod.

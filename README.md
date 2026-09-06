@@ -3,14 +3,16 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-4 complete (service, containerization,
-> Kubernetes Deployment, real-time server-authoritative Pong over WebSockets).
+> **Status:** in progress. Phases 1-5 complete (service, containerization,
+> Kubernetes Deployment, real-time server-authoritative Pong over WebSockets,
+> Redis-backed matchmaking that works across replicas).
 
 ## Repository layout
 
 ```
 services/game-server/    Node.js + TypeScript game service (HTTP + WebSocket)
 services/web/            React + TypeScript + Vite client
+docker-compose.yml       local backing services (Redis) for development
 k8s/                     Kubernetes manifests
 docs/                    Architecture notes, runbooks, learning log
 ```
@@ -21,8 +23,11 @@ Two processes. Vite proxies `/ws` and `/config` to the game server, so the
 browser sees a single origin and there is no CORS to configure.
 
 ```bash
+# terminal 0 - backing services
+docker compose up -d
+
 # terminal 1
-cd services/game-server && npm install && PORT=3100 npm run dev
+cd services/game-server && npm install && PORT=3100 REDIS_PORT=6380 npm run dev
 
 # terminal 2
 cd services/web && npm install && npm run dev
@@ -43,6 +48,17 @@ cd services/game-server && npm test
 `test/physics.test.mjs` tests the simulation as pure functions (no networking).
 `test/match.test.mjs` drives two bot clients through a real match over
 WebSockets.
+
+`test/redis.test.mjs` needs two server instances sharing one Redis, to prove
+matchmaking works across replicas:
+
+```bash
+docker compose up -d
+cd services/game-server && npm run build
+POD_NAME=pod-A PORT=3101 REDIS_PORT=6380 node dist/index.js &
+POD_NAME=pod-B PORT=3102 REDIS_PORT=6380 node dist/index.js &
+node test/redis.test.mjs http://localhost:3101 http://localhost:3102
+```
 
 ## Docker
 
@@ -86,7 +102,8 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 |--------|------------|-------------------------------------------------------|
 | GET    | `/health`  | `{"status":"ok"}`                                      |
 | GET    | `/whoami`  | `{"instance","uptimeSeconds","version"}` - which replica answered |
-| GET    | `/stats`   | `{"activeGames","rooms","waitingPlayers","connections"}` |
+| GET    | `/stats`   | this Pod's local view: rooms it owns, its connections, Redis status |
+| GET    | `/cluster` | cluster-wide view aggregated from every live Pod's presence record |
 | GET    | `/config`  | field dimensions the client needs in order to draw |
 | GET    | `/ws`      | WebSocket upgrade - see [protocol](docs/websocket-protocol.md) |
 
@@ -94,4 +111,5 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 
 - [Learning log](docs/learning-log.md) - what was built in each phase and why
 - [WebSocket protocol](docs/websocket-protocol.md)
+- [Redis keys and channels](docs/redis-keys.md)
 - [Architecture decisions](docs/decisions.md)
