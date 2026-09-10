@@ -42,6 +42,7 @@ export function useGame() {
           snaps.current = { prev: snaps.current.curr, curr: s };
           break;
         }
+        case "unauthorized": setStatus("unauthorized"); break;
         case "end": {
           // The winning point ends the match instantly, so no further `state`
           // message ever carries it. Patch the last snapshot with the
@@ -71,10 +72,12 @@ export function useGame() {
     if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(msg));
   }, []);
 
-  const join = useCallback((name: string) => {
+  // We send the signed token, never a username. The server derives identity
+  // from the signature, so a client cannot claim to be someone else.
+  const join = useCallback((token: string) => {
     snaps.current = { prev: null, curr: null };
     setResult(null);
-    send({ t: "join", name });
+    send({ t: "join", token });
   }, [send]);
 
   // We send a direction only when it CHANGES, not every frame. The server

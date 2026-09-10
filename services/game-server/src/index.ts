@@ -5,6 +5,9 @@ import { Arena, type Conn } from "./game/arena.js";
 import { startBus, stopBus, POD_ID } from "./redis/bus.js";
 import { redis, redisHost } from "./redis/client.js";
 import { startPresence, clusterPresence } from "./redis/presence.js";
+import { migrate, dbHealthy, pool } from "./db/index.js";
+import { registerAuthRoutes } from "./auth/routes.js";
+import { verifyToken } from "./auth/token.js";
 import * as C from "./game/constants.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -12,6 +15,13 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket);
+
+// Run migrations before serving traffic. Every replica does this; a Postgres
+// advisory lock makes sure only one actually applies them.
+const pending = await migrate((m) => app.log.info(m));
+app.log.info({ pendingMigrations: pending }, "database ready");
+
+registerAuthRoutes(app);
 
 const arena = new Arena();
 
@@ -21,7 +31,19 @@ await startBus({
   onRoomInput: (m) => arena.onRoomInput(m),
 });
 
+// Liveness: "is this process alive?" Deliberately checks NOTHING external.
+// If it depended on Postgres, a database blip would make Kubernetes restart
+// every healthy game server - turning a small outage into a large one.
 app.get("/health", async () => ({ status: "ok" }));
+
+// Readiness: "can this process do useful work?" This one SHOULD check
+// dependencies, because the right response to a broken dependency is to stop
+// receiving traffic, not to be restarted. Wired to a probe in Phase 11.
+app.get("/ready", async (_req, reply) => {
+  const [db, redisOk] = [await dbHealthy(), redis.status === "ready"];
+  const ok = db && redisOk;
+  return reply.code(ok ? 200 : 503).send({ ok, postgres: db, redis: redisOk });
+});
 
 app.get("/whoami", async () => ({
   instance: os.hostname(),
@@ -73,12 +95,20 @@ app.get("/ws", { websocket: true }, (socket) => {
     switch (msg.t) {
       case "join": {
         if (conn.room || conn.remote) return send({ t: "error", message: "already in a game" });
-        // Never trust client input: clamp the name before storing it.
-        conn.name = String(msg.name ?? "anonymous").slice(0, 20) || "anonymous";
-        arena.join(conn).catch((e) => {
-          app.log.error({ err: e }, "join failed");
-          send({ t: "error", message: "matchmaking unavailable" });
-        });
+        // Identity comes from the signed token, never from the client's claim
+        // about who it is. This is why the `name` field is gone.
+        void (async () => {
+          const claims = await verifyToken(typeof msg.token === "string" ? msg.token : undefined);
+          if (!claims) return send({ t: "unauthorized", message: "sign in to play" });
+          conn.userId = claims.sub;
+          conn.name = claims.username;
+          try {
+            await arena.join(conn);
+          } catch (e) {
+            app.log.error({ err: e }, "join failed");
+            send({ t: "error", message: "matchmaking unavailable" });
+          }
+        })();
         break;
       }
       case "input": {
@@ -115,6 +145,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     await stopPresence();
     await stopBus();
     await app.close();
+    await pool.end().catch(() => {});
     process.exit(0);
   });
 }

@@ -8,15 +8,19 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "npm run build && node test/physics.test.mjs && node test/match.test.mjs",
-    "test:physics": "node test/physics.test.mjs"
+    "test:physics": "node test/physics.test.mjs",
+    "test:auth": "node test/auth.test.mjs"
   },
   "dependencies": {
     "@fastify/websocket": "^11.3.0",
     "fastify": "^5.2.1",
-    "ioredis": "^5.11.1"
+    "ioredis": "^5.11.1",
+    "jose": "^6.2.12",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.16",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

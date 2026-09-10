@@ -26,6 +26,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy the compiled JavaScript out of the builder stage.
 COPY --from=builder /app/dist ./dist
 
+# Migrations are read at runtime, so they must ship in the image.
+COPY migrations ./migrations
+
 # Do not run as root. If someone escapes the app, they land as an unprivileged user.
 USER node
 

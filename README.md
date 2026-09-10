@@ -3,16 +3,19 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-5 complete (service, containerization,
+> **Status:** in progress. Phases 1-6 complete (service, containerization,
 > Kubernetes Deployment, real-time server-authoritative Pong over WebSockets,
-> Redis-backed matchmaking that works across replicas).
+> Redis-backed matchmaking across replicas, accounts + JWT auth on PostgreSQL).
+>
+> **Known limitation:** PostgreSQL currently runs on `emptyDir`, so deleting its
+> Pod destroys all data. This is deliberate and is fixed in Phase 9.
 
 ## Repository layout
 
 ```
 services/game-server/    Node.js + TypeScript game service (HTTP + WebSocket)
 services/web/            React + TypeScript + Vite client
-docker-compose.yml       local backing services (Redis) for development
+docker-compose.yml       local backing services (Redis, PostgreSQL) for development
 k8s/                     Kubernetes manifests
 docs/                    Architecture notes, runbooks, learning log
 ```
@@ -27,7 +30,8 @@ browser sees a single origin and there is no CORS to configure.
 docker compose up -d
 
 # terminal 1
-cd services/game-server && npm install && PORT=3100 REDIS_PORT=6380 npm run dev
+cd services/game-server && npm install && \
+  PORT=3100 REDIS_PORT=6380 POSTGRES_PORT=5433 npm run dev
 
 # terminal 2
 cd services/web && npm install && npm run dev
@@ -100,7 +104,11 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 
 | Method | Path       | Response                                              |
 |--------|------------|-------------------------------------------------------|
-| GET    | `/health`  | `{"status":"ok"}`                                      |
+| POST   | `/auth/register` | `{username, password}` -> `{token, user}`; 409 if taken |
+| POST   | `/auth/login`    | `{username, password}` -> `{token, user}`; 401 otherwise |
+| GET    | `/auth/me`       | requires `Authorization: Bearer <token>` |
+| GET    | `/health`  | liveness - checks nothing external                     |
+| GET    | `/ready`   | readiness - checks PostgreSQL and Redis                |
 | GET    | `/whoami`  | `{"instance","uptimeSeconds","version"}` - which replica answered |
 | GET    | `/stats`   | this Pod's local view: rooms it owns, its connections, Redis status |
 | GET    | `/cluster` | cluster-wide view aggregated from every live Pod's presence record |
@@ -112,4 +120,5 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 - [Learning log](docs/learning-log.md) - what was built in each phase and why
 - [WebSocket protocol](docs/websocket-protocol.md)
 - [Redis keys and channels](docs/redis-keys.md)
+- [Database schema](docs/database-schema.md)
 - [Architecture decisions](docs/decisions.md)

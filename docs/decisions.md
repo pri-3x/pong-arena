@@ -63,3 +63,41 @@ channels per Pod plus a map lookup in application code is cheaper and simpler.
 **Trade-off:** every Pod receives messages for all of its own players rather
 than only the rooms it participates in. That is the same volume of traffic,
 just not partitioned by room.
+
+## ADR-008: scrypt for password hashing
+**Decision:** hash passwords with Node's built-in `crypto.scrypt`
+(N=32768, r=8, p=1), storing parameters and a per-user salt alongside the hash.
+**Why:** general-purpose hashes (SHA-256) are designed to be fast, which is
+exactly wrong for passwords - a GPU tries billions per second. scrypt is
+deliberately slow and memory-hard. It ships inside Node, so there is no native
+module to compile, which keeps the Alpine image small and the build simple.
+**Alternative:** argon2 is the modern first choice and would be the pick if we
+were willing to add a native dependency.
+**Verification:** the stored value contains no plaintext, and two users with
+identical passwords have different salts and different hashes.
+
+## ADR-009: JWT for session state
+**Decision:** stateless HS256 JWTs, verified with a pinned algorithm list.
+**Why:** the WebSocket handshake needs to establish identity without a database
+round trip, and a signed token does that. The algorithm is pinned because
+accepting the token's own `alg` header is a classic vulnerability (`alg: none`).
+**Trade-off:** a JWT cannot be revoked before it expires. TTL is 24h. If
+revocation becomes necessary, the fix is a deny-list in Redis - which is exactly
+the kind of small, fast, ephemeral state Redis is already there for.
+**Note:** a JWT is signed, not encrypted. Anyone can read its contents.
+
+## ADR-010: sessionStorage, not localStorage, for the token
+**Decision:** keep the token in `sessionStorage`.
+**Why:** `localStorage` is shared by every tab on an origin, so signing in as a
+second player in a second tab silently replaces the first tab's identity. This
+was observed directly - a match rendered as "grace vs grace". `sessionStorage`
+is per-tab, which lets one browser hold two players.
+**Trade-off:** closing the tab signs you out. Acceptable for a game session, and
+it makes local two-player testing and demoing trivial.
+
+## ADR-011: PostgreSQL on emptyDir (deliberately temporary)
+**Decision:** for Phase 6 only, run PostgreSQL with `emptyDir` storage.
+**Why:** to demonstrate the failure rather than assert it. Deleting the Pod
+destroyed every account AND every table - `psql` reported "Did not find any
+relations." That is the concrete motivation for PersistentVolumes.
+**Revisit at:** Phase 9. This is not a defensible configuration for anything.

@@ -329,3 +329,111 @@ Phase 16 rather than pretending it already works.
 kernel refuses signals to PID 1 from inside its own PID namespace unless the
 process installed a handler, and SIGKILL cannot be handled. The Pod stayed
 `Running` with `RESTARTS 0`. To simulate a hard crash, force-delete the Pod.
+
+## Phase 6 - Authentication and PostgreSQL
+
+### Why a second database
+
+Redis already stores state, so why add PostgreSQL? Because they answer different
+questions:
+
+| | Redis | PostgreSQL |
+|---|---|---|
+| Holds | matchmaking queue, presence, pub/sub | users, matches |
+| If it is lost | players requeue; annoying | accounts destroyed; unacceptable |
+| Access pattern | one key at a time, very fast | queries, joins, constraints |
+| Guarantees | fire-and-forget | transactions, foreign keys, uniqueness |
+
+The rule is not "Redis is a cache". It is: **can this data be recreated?** The
+matchmaking queue can. A user account cannot.
+
+### Password hashing
+
+Stored as `scrypt$N$r$p$salt$hash`. The three things that matter:
+
+1. **Slow on purpose.** SHA-256 is built to be fast, which is exactly wrong -
+   a GPU tries billions of guesses per second. scrypt is deliberately slow and
+   memory-hard.
+2. **A random per-user salt.** Two people with the same password get different
+   hashes, so cracking one reveals nothing about the other. Verified directly:
+   two accounts with an identical password have different salts.
+3. **Constant-time comparison.** `===` returns as soon as two bytes differ, and
+   that timing difference leaks the hash a byte at a time. `timingSafeEqual`
+   always takes the same time.
+
+### Not leaking which usernames exist
+
+A wrong password and a non-existent user return the *same* 401 and the *same*
+message. Distinguishing them turns the login form into a tool for discovering
+who has an account. There is a test asserting the two responses are identical.
+
+### JWT
+
+Identity comes from the signed token, never from what the client claims. The old
+`{"t":"join","name":"alice"}` is gone; it is now `{"t":"join","token":"..."}` and
+the server reads the username out of the verified signature.
+
+Two details:
+- The algorithm is **pinned** to HS256. Accepting the token's own `alg` header is
+  a classic vulnerability - an attacker sends `alg: none` and the signature is
+  no longer checked.
+- A JWT is **signed, not encrypted**. Anyone can base64-decode and read it.
+  Never put a secret inside one.
+
+Tests cover a tampered signature and an edited payload; both are rejected.
+
+### Migrations with a cluster-wide lock
+
+Every replica runs migrations at startup, so they all try at once.
+`pg_advisory_lock(727001)` is a Postgres-wide mutex: the first Pod applies the
+migrations, the rest block and then find nothing to do.
+
+```
+game-server-546dd7ff7-ctw6j: 1 migration(s) applied
+game-server-546dd7ff7-m5sfs: 0 migration(s) applied
+```
+
+Without it, concurrent `CREATE TABLE` statements race and a Pod crashes on boot.
+
+### Liveness vs readiness (groundwork for Phase 11)
+
+Two endpoints now exist, and the difference matters:
+
+- `/health` checks **nothing** external. It answers "is this process alive?" If
+  it depended on Postgres, a database blip would make Kubernetes restart every
+  healthy game server and turn a small outage into a large one.
+- `/ready` checks Postgres and Redis. It answers "can this process do useful
+  work?" The right response to a broken dependency is to stop receiving traffic,
+  not to be restarted.
+
+### Bugs found
+
+**A user could be matched against themselves.** Two tabs signed into one account
+were paired into a match. It rendered as "grace vs grace". This would have
+exploded in Phase 7, because `match_players` has `PRIMARY KEY (match_id,
+user_id)` and recording that match would violate it. The matchmaker now puts
+both tickets back and keeps waiting.
+
+**localStorage is shared across tabs.** Signing in as a second player in a
+second tab silently replaced the first tab's identity - which is how the
+self-match bug surfaced. Switched to `sessionStorage`, which is per-tab.
+
+### Proving why databases need persistent storage
+
+PostgreSQL was deployed on `emptyDir` on purpose, then the Pod was deleted:
+
+```
+before:  users = k8suser, ada, grace
+after:   ERROR: relation "users" does not exist
+         \dt -> Did not find any relations.
+```
+
+Not just the rows - the entire schema. `emptyDir` is scratch space tied to the
+Pod's lifetime.
+
+One good property did show up: restarting the game servers rebuilt the schema
+automatically, because migrations run on boot and `schema_migrations` was gone
+too. The structure recovers on its own; the data does not.
+
+This is the concrete motivation for **Phase 9: PersistentVolume,
+PersistentVolumeClaim, StatefulSet.**

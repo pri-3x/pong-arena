@@ -3,6 +3,8 @@ import { createState, serve, step, type GameState, type Side } from "./physics.j
 
 export interface Player {
   id: string;
+  /** Authenticated user id, used to persist the match result in Phase 7. */
+  userId: string;
   name: string;
   side: Side;
   send: (msg: unknown) => void;

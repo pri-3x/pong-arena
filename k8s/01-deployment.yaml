@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: game-server
-          image: pong-game-server:v4
+          image: pong-game-server:v6
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -27,7 +27,7 @@ spec:
             - name: PORT
               value: "3000"
             - name: APP_VERSION
-              value: "v4"
+              value: "v6"
             # Service discovery by NAME, never by IP. CoreDNS resolves this to
             # whatever Pod the redis Service currently points at.
             - name: REDIS_HOST
@@ -41,3 +41,17 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: "pong"
+            - name: POSTGRES_DB
+              value: "pong"
+            # TODO(phase 8): these two are secrets and must move to a
+            # Kubernetes Secret rather than sitting in a committed manifest.
+            - name: POSTGRES_PASSWORD
+              value: "pong_dev_password"
+            - name: JWT_SECRET
+              value: "dev-only-insecure-secret-change-me"

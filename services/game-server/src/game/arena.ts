@@ -7,11 +7,13 @@ import { POD_ID, sendToPlayer, sendInputToRoom, sendLeaveToRoom, type ToPlayer, 
 const QUEUE_KEY = "mm:queue";
 
 /** A player waiting in the shared queue. Serialised into Redis as JSON. */
-interface Ticket { playerId: string; name: string; pod: string }
+interface Ticket { playerId: string; userId: string; name: string; pod: string }
 
 /** Everything we track about one locally-connected client. */
 export interface Conn {
   playerId: string;
+  /** The authenticated user this socket belongs to. Set on `join`. */
+  userId: string | null;
   name: string;
   send: (m: unknown) => void;
   /** Set when the simulation for this player's match runs on THIS pod. */
@@ -40,7 +42,7 @@ export class Arena {
 
   newConn(name: string, send: (m: unknown) => void): Conn {
     const conn: Conn = {
-      playerId: randomUUID(), name, send,
+      playerId: randomUUID(), userId: null, name, send,
       room: null, remote: null, side: null, ticket: null,
     };
     this.local.set(conn.playerId, conn);
@@ -52,7 +54,9 @@ export class Arena {
   }
 
   async join(conn: Conn): Promise<void> {
-    const ticket: Ticket = { playerId: conn.playerId, name: conn.name, pod: POD_ID };
+    const ticket: Ticket = {
+      playerId: conn.playerId, userId: conn.userId ?? "", name: conn.name, pod: POD_ID,
+    };
     const raw = JSON.stringify(ticket);
 
     // One atomic Redis call: either we get an opponent, or we are queued.
@@ -65,6 +69,16 @@ export class Arena {
     }
 
     const opponent: Ticket = JSON.parse(opponentRaw);
+
+    // Two tabs signed into the SAME account must not be matched together:
+    // match_players is keyed on (match_id, user_id), so recording that match
+    // in Phase 7 would violate the primary key. Put them both back and wait.
+    if (opponent.userId && opponent.userId === conn.userId) {
+      await redis.lpush(QUEUE_KEY, opponentRaw, raw);
+      conn.ticket = raw;
+      conn.send({ t: "waiting", playerId: conn.playerId, reason: "cannot play yourself" });
+      return;
+    }
 
     // Whoever completes the match OWNS the room and runs the simulation.
     const room = new Room(randomUUID().slice(0, 8), (r) => this.rooms.delete(r.id));
@@ -89,7 +103,7 @@ export class Arena {
       const localConn = t.pod === POD_ID ? this.local.get(t.playerId) : undefined;
       if (localConn) { localConn.room = room; localConn.side = side; localConn.ticket = null; }
 
-      room.add({ id: t.playerId, name: t.name, side, send });
+      room.add({ id: t.playerId, userId: t.userId, name: t.name, side, send });
     }
   }
 

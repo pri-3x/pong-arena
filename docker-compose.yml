@@ -15,3 +15,24 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pong
+      POSTGRES_PASSWORD: pong_dev_password
+      POSTGRES_DB: pong
+    ports:
+      - "5433:5432"     # 5433 on the Mac - 5432 is taken by another project
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pong"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  # A named volume, unlike Redis above. Local dev data should survive
+  # `docker compose down` - that is the whole point of a database.
+  pgdata:
