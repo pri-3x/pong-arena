@@ -3,16 +3,17 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-8 complete (service, containerization,
+> **Status:** in progress. Phases 1-9 complete (service, containerization,
 > Kubernetes Deployment, real-time server-authoritative Pong over WebSockets,
 > Redis-backed matchmaking across replicas, accounts + JWT auth on PostgreSQL,
-> match history and leaderboard, configuration via ConfigMap/Secret).
+> match history and leaderboard, configuration via ConfigMap/Secret,
+> PostgreSQL on a StatefulSet with persistent storage).
 >
-> **Known limitations**, both deliberate and both documented:
-> - PostgreSQL runs on `emptyDir`, so deleting its Pod destroys all data
->   (fixed in Phase 9).
+> **Known limitations**, documented rather than hidden:
 > - If the Pod owning a match is hard-killed, the players are not notified and
->   the result is not recorded (fixed in Phase 16).
+>   the result is not recorded (to be fixed in Phase 16).
+> - The PostgreSQL StatefulSet has no backups, no replication and no failover.
+>   Fine for learning; see [docs/storage.md](docs/storage.md).
 
 ## Repository layout
 
@@ -130,4 +131,5 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 - [Redis keys and channels](docs/redis-keys.md)
 - [Database schema](docs/database-schema.md)
 - [Configuration and secrets](docs/configuration.md)
+- [Persistent storage](docs/storage.md)
 - [Architecture decisions](docs/decisions.md)

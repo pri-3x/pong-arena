@@ -160,3 +160,24 @@ to succeed and silently does nothing.
 the application would need to watch the file and reload, which is more machinery
 than a rolling restart.
 **Superseded at:** Phase 19 - Helm does this with `checksum/config` annotations.
+
+## ADR-018: PostgreSQL as a StatefulSet with volumeClaimTemplates
+**Decision:** replace the Deployment + emptyDir with a StatefulSet, a headless
+Service, and a 2Gi PVC from `volumeClaimTemplates`.
+**Why:** emptyDir destroyed the database three times during Phases 6-8 - once
+deliberately, once on an image rollout, once when the Secret reference changed.
+A StatefulSet gives stable Pod identity and a claim that follows the Pod.
+**Verified:** deleting `postgres-0` and even deleting the entire StatefulSet both
+preserved the data; the recreated Pod rebound to the same PersistentVolume.
+**Not production-ready:** no backups, no replication, no failover, single Pod.
+Production would use a managed database or an operator such as CloudNativePG.
+
+## ADR-019: Redis stays a Deployment with emptyDir
+**Decision:** do not give Redis persistent storage.
+**Why:** every key in Redis is recreatable - the matchmaking queue, presence
+records with a 10s TTL, and fire-and-forget pub/sub. Losing them costs players a
+requeue. Adding a PVC would imply the data matters more than it does and teach
+the wrong instinct: persistence is about whether data can be rebuilt, not about
+how important it feels.
+**Revisit if:** Redis ever holds something authoritative, e.g. if match results
+were buffered there before being written to PostgreSQL.

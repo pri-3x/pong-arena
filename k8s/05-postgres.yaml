@@ -1,9 +1,22 @@
+# A HEADLESS Service: clusterIP: None.
+#
+# A normal Service gives you one virtual IP that load-balances across Pods -
+# exactly what you do NOT want for a database, where every replica is a
+# different thing. A headless Service instead gives each Pod its own DNS record:
+#
+#     postgres-0.postgres.default.svc.cluster.local
+#
+# That stable per-Pod name is what makes a StatefulSet useful. The plain name
+# `postgres` still resolves (to the Pod addresses), so the application's
+# connection settings do not change.
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres
+  labels:
+    app: postgres
 spec:
-  type: ClusterIP
+  clusterIP: None
   selector:
     app: postgres
   ports:
@@ -12,10 +25,11 @@ spec:
       targetPort: 5432
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: postgres
 spec:
+  serviceName: postgres        # must name the headless Service above
   replicas: 1
   selector:
     matchLabels:
@@ -25,14 +39,15 @@ spec:
       labels:
         app: postgres
     spec:
+      # Give PostgreSQL time to finish a clean shutdown. The default 30s is
+      # usually enough here, but a database being SIGKILLed mid-write is
+      # exactly the situation worth avoiding.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: postgres
           image: postgres:16-alpine
           imagePullPolicy: IfNotPresent
           env:
-            # Only the keys this container actually needs, pulled individually
-            # rather than with envFrom. The ConfigMap also carries REDIS_HOST
-            # and friends, which mean nothing to PostgreSQL.
             - name: POSTGRES_USER
               valueFrom:
                 configMapKeyRef:
@@ -48,10 +63,14 @@ spec:
                 secretKeyRef:
                   name: pong-secrets
                   key: POSTGRES_PASSWORD
+            # PGDATA points at a SUBDIRECTORY of the mount, not the mount root.
+            # Some volume types put a lost+found directory at the root, and
+            # PostgreSQL refuses to initialise into a non-empty directory.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:
-            - containerPort: 5432
+            - name: postgres
+              containerPort: 5432
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "pong"]
@@ -60,13 +79,18 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-      volumes:
-        # DELIBERATELY WRONG, for one phase only.
-        #
-        # emptyDir is scratch space tied to the Pod's lifetime. When this Pod is
-        # replaced, every user account disappears. We are going to prove that,
-        # because "databases need persistent storage" lands better as a
-        # demonstration than as a warning. Phase 9 replaces this with a
-        # PersistentVolumeClaim and a StatefulSet.
-        - name: data
-          emptyDir: {}
+  # The StatefulSet's defining feature: each replica gets its OWN PVC, created
+  # from this template and named data-postgres-0, data-postgres-1, ... The claim
+  # follows its Pod across restarts and rescheduling.
+  #
+  # These PVCs are deliberately NOT deleted when the StatefulSet is deleted.
+  # Kubernetes assumes your data is more valuable than your tidiness.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 2Gi

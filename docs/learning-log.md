@@ -623,3 +623,114 @@ match was destroyed again. The schema came back on its own, because the game
 servers re-run migrations on boot. The data did not.
 
 Phase 9 is next, and at this point it is well earned.
+
+## Phase 9 - PersistentVolumes and StatefulSets
+
+### The model
+
+You write a **PersistentVolumeClaim** ("I need 2Gi, read-write"). The
+**StorageClass** dynamically provisions a **PersistentVolume** to satisfy it. You
+rarely write a PV by hand.
+
+Proved in isolation before touching the database: a PVC plus a busybox Pod that
+appends a line to a file. Delete the Pod, recreate it, and the first line is
+still there:
+
+```
+written at Fri Sep 11 17:15:29 UTC 2026     <- first pod
+written at Fri Sep 11 17:27:25 UTC 2026     <- after deleting and recreating it
+```
+
+### WaitForFirstConsumer
+
+A new PVC sits in `Pending` and no PV exists yet:
+
+```
+Normal  WaitForFirstConsumer  waiting for first consumer to be created before binding
+```
+
+Not a failure. The volume is created only once a Pod needs it, so it lands on the
+node that Pod was scheduled to. Binding earlier could strand a Pod away from its
+own disk.
+
+### reclaimPolicy is a foot-gun
+
+`standard` uses `reclaimPolicy: Delete`, so deleting the **claim** destroys the
+**data**:
+
+```
+kubectl delete pvc demo-claim
+kubectl get pv  ->  No resources found
+```
+
+`Retain` leaves the volume behind for a human to deal with.
+
+### StatefulSet
+
+Three things a Deployment does not give you:
+
+1. **Stable names.** `postgres-0`, not `postgres-546fff955f-dmvcb`.
+2. **Stable storage.** `volumeClaimTemplates` gives each replica its own PVC,
+   named `data-postgres-0`, which follows that Pod forever.
+3. **Stable network identity**, via a headless Service
+   (`clusterIP: None`): `postgres-0.postgres.default.svc.cluster.local`.
+
+The test for which to use is **are the replicas interchangeable?** Two
+game-server Pods are. Two database Pods are not.
+
+A headless Service deliberately has no virtual IP and does no load balancing -
+spreading writes randomly across database replicas is exactly wrong. The plain
+name `postgres` still resolves, so `POSTGRES_HOST=postgres` did not change.
+
+### The test that emptyDir failed three times
+
+```
+before:  users=2  matches=1   PV=pvc-bb673dcc…
+>>> kubectl delete pod postgres-0
+after:   users=2  matches=1   PV=pvc-bb673dcc…   (same PV: YES)
+         ada, grace
+```
+
+And the stronger version - deleting the whole StatefulSet:
+
+```
+kubectl delete statefulset postgres
+  pods: (none)
+  PVC:  data-postgres-0  Bound  2Gi       <- survives
+kubectl apply -f k8s/05-postgres.yaml
+  users: ada, grace                       <- reattached, intact
+```
+
+`volumeClaimTemplates` PVCs are deliberately not garbage-collected with the
+StatefulSet. Kubernetes assumes the data is worth more than the tidiness.
+
+### What "persistent" actually means here
+
+Worth being precise about rather than feeling safe:
+
+```
+hostPath:      /var/local-path-provisioner/pvc-bb673dcc…_default_data-postgres-0
+nodeAffinity:  desktop-control-plane
+```
+
+The volume is a **directory on the node**, pinned there by nodeAffinity. It
+survives the Pod. It would not survive the node, and the Pod can never be
+rescheduled to a different node. On a real cluster the provisioner would be EBS
+or Persistent Disk, and the volume would detach and reattach elsewhere.
+
+### Why Redis stayed a Deployment with emptyDir
+
+Deliberate. Everything in Redis here is recreatable: the matchmaking queue,
+presence records with a 10 s TTL, and fire-and-forget pub/sub. If Redis
+restarts, players requeue.
+
+Persistence is not about how important the data feels. It is about whether the
+data can be rebuilt.
+
+### Not production-ready, and why
+
+This StatefulSet has no backups, no replication, no failover, no point-in-time
+recovery, and one Pod - so any restart is downtime. For production you would
+normally use a managed database, or an operator (CloudNativePG, Zalando,
+Crunchy) that actually handles replication and backups. A StatefulSet gives you
+a Pod with a disk; it does not give you a database service.
