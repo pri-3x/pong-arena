@@ -1,0 +1,13 @@
+{{ .Chart.Name }} {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) installed as "{{ .Release.Name }}".
+
+  Play:      http://localhost{{ if .Values.ingress.host }}  (or http://{{ .Values.ingress.host }}){{ end }}
+  Dashboard: http://localhost/grafana
+
+  helm status {{ .Release.Name }}
+  helm get values {{ .Release.Name }}
+  helm rollback {{ .Release.Name }}
+
+{{- if not .Values.existingSecret }}
+
+WARNING: existingSecret is not set. Run ./scripts/create-secrets.sh first.
+{{- end }}

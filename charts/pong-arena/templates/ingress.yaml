@@ -1,0 +1,36 @@
+{{- if .Values.ingress.enabled }}
+{{- $gs := printf "%s-game-server" .Release.Name -}}
+{{- $paths := list "/ws" "/auth" "/matches" "/leaderboard" "/cluster" "/stats" "/config" "/ready" "/health" -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "pong.labels" . | nindent 4 }}
+  annotations:
+    # Without these, nginx's 60s default read timeout silently cuts every
+    # WebSocket match after a minute. See ADR-020.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.websocketTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .Values.ingress.websocketTimeoutSeconds | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    {{- range $host := list .Values.ingress.host "" }}
+    - {{ if $host }}host: {{ $host }}
+      {{ end }}http:
+        paths:
+          {{- range $p := $paths }}
+          - path: {{ $p }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $gs }}
+                port: { number: {{ $.Values.gameServer.port }} }
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Release.Name }}-web
+                port: { number: 80 }
+    {{- end }}
+{{- end }}

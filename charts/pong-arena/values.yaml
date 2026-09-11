@@ -1,0 +1,76 @@
+# Everything configurable lives here. A different environment is a different
+# values file, not a different set of manifests.
+
+nameOverride: ""
+
+gameServer:
+  image:
+    repository: pong-game-server
+    tag: ""              # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  replicas: 2
+  port: 3000
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+  # preStop keeps the Pod serving while its Service endpoint removal
+  # propagates. See ADR-030.
+  preStopSleepSeconds: 8
+  terminationGracePeriodSeconds: 40
+  allowChaos: false      # gates POST /debug/unready; never enable in production
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 60
+
+web:
+  image:
+    repository: pong-web
+    tag: "v8"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 100m, memory: 64Mi }
+
+redis:
+  enabled: true
+  image: redis:7.4-alpine
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 256Mi }
+
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storage:
+    size: 2Gi
+    storageClassName: standard
+  # requests == limits gives QoS class Guaranteed, so the database is the last
+  # thing evicted under node pressure. See ADR-023.
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 250m, memory: 512Mi }
+
+# Non-sensitive configuration, rendered into a ConfigMap.
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  REDIS_PORT: "6379"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: pong
+  POSTGRES_DB: pong
+  POSTGRES_POOL_MAX: "10"
+  JWT_TTL: 24h
+
+# Secrets are NOT templated. The chart references an existing Secret created out
+# of band by scripts/create-secrets.sh, so no credential can ever end up in a
+# values file that gets committed.
+existingSecret: pong-secrets
+
+ingress:
+  enabled: true
+  className: nginx
+  host: pong.local          # a second, host-less rule is always rendered too
+  websocketTimeoutSeconds: 3600

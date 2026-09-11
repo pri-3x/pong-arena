@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-game-server
+  labels: {{- include "pong.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.gameServer.autoscaling.enabled }}
+  # Omit replicas entirely when the HPA is enabled, otherwise every `helm
+  # upgrade` resets the replica count and fights the autoscaler.
+  replicas: {{ .Values.gameServer.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-game-server
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-game-server
+        {{- include "pong.labels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.gameServer.port | quote }}
+        prometheus.io/path: /metrics
+        # THIS is what scripts/apply.sh was doing by hand. Helm can hash the
+        # rendered ConfigMap at template time, so a config change alters the Pod
+        # template and triggers a rolling update automatically.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.gameServer.terminationGracePeriodSeconds }}
+      containers:
+        - name: game-server
+          image: {{ include "pong.gameServerImage" . }}
+          imagePullPolicy: {{ .Values.gameServer.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.gameServer.port }}
+          envFrom:
+            - configMapRef: { name: {{ .Release.Name }}-config }
+            - secretRef:    { name: {{ .Values.existingSecret }} }
+          env:
+            - name: APP_VERSION
+              value: {{ .Chart.AppVersion | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            {{- if .Values.gameServer.allowChaos }}
+            - name: ALLOW_CHAOS
+              value: "true"
+            {{- end }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", {{ .Values.gameServer.preStopSleepSeconds | quote }}]
+          resources: {{- toYaml .Values.gameServer.resources | nindent 12 }}
+          startupProbe:
+            httpGet: { path: /health, port: {{ .Values.gameServer.port }} }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health, port: {{ .Values.gameServer.port }} }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: {{ .Values.gameServer.port }} }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-game-server
+  labels: {{- include "pong.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}-game-server
+  ports:
+    - name: http
+      port: {{ .Values.gameServer.port }}
+      targetPort: {{ .Values.gameServer.port }}
+{{- if .Values.gameServer.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-game-server
+  labels: {{- include "pong.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-game-server
+  minReplicas: {{ .Values.gameServer.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.gameServer.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.gameServer.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 30 }]
+    scaleDown:
+      # Slow, because removing a Pod drops the WebSocket connections it holds.
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+{{- end }}

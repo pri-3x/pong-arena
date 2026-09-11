@@ -1,0 +1,9 @@
+apiVersion: v2
+name: pong-arena
+description: Real-time multiplayer Pong on Kubernetes
+type: application
+# version is the CHART version; appVersion is the APPLICATION version.
+# They move independently: changing a template bumps version, shipping new
+# application code bumps appVersion.
+version: 0.1.0
+appVersion: "v18"

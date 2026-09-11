@@ -1220,3 +1220,104 @@ Bugs 2 and 3 were in the Phase 16 heartbeat - code that had already passed a
 manual chaos test. **The manual test exercised only the failure path; the
 automated suite exercised the normal path, which is where the bugs were.** That
 is the argument for CI in one sentence.
+
+## Phase 19 - Helm
+
+### What a chart actually is
+
+```
+charts/pong-arena/
+  Chart.yaml        name, chart version, appVersion
+  values.yaml       every knob, with defaults
+  templates/        the manifests, with {{ }} placeholders
+```
+
+**Chart version and appVersion move independently.** Editing a template bumps
+`version`; shipping new application code bumps `appVersion`. The game-server
+image tag defaults to `.Chart.AppVersion`, so a release is one line in
+Chart.yaml.
+
+A **release** is an installed instance. The same chart installed twice gives two
+independent stacks, which is why every name is prefixed with `.Release.Name`.
+
+### The payoff: Helm does the checksum trick for us
+
+Phase 8 needed `scripts/apply.sh` to hash the ConfigMap by hand so that a config
+change would actually roll the Pods. Helm does it in one line:
+
+```yaml
+checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+```
+
+It hashes the *rendered* ConfigMap at template time, so a config change alters
+the Pod template and triggers a normal rolling update.
+
+### One template detail worth knowing
+
+```yaml
+{{- if not .Values.gameServer.autoscaling.enabled }}
+replicas: {{ .Values.gameServer.replicas }}
+{{- end }}
+```
+
+`replicas` is omitted entirely when the HPA is enabled. Leaving it in means
+every `helm upgrade` resets the replica count and fights the autoscaler.
+
+### Secrets are deliberately NOT templated
+
+The chart references an existing Secret by name (`existingSecret:
+pong-secrets`) created out of band. A credential can then never end up in a
+values file that gets committed.
+
+### Installing the chart found a real design flaw
+
+`pong-web` crash-looped on install:
+
+```
+[emerg] host not found in upstream "game-server"
+```
+
+The nginx config hardcoded the Service name. Helm prefixes Services with the
+release name, so it was looking for `game-server` while the Service was
+`pong-game-server`.
+
+That is not a Helm problem - it is a latent flaw in the image that only showed
+up once something tried to run two copies. The image now reads the upstream
+from `GAME_SERVER_HOST` via the nginx image's envsubst templating, with
+`NGINX_ENVSUBST_FILTER` limiting substitution so nginx's own `$uri`/`$host`
+variables survive.
+
+**Making something reusable is how you discover it was never reusable.**
+
+### Releases, upgrades, rollbacks
+
+```
+REVISION  STATUS      CHART             APP VERSION  DESCRIPTION
+1         superseded  pong-arena-0.1.0  v18          Install complete
+2         superseded  pong-arena-0.1.0  v18          Upgrade complete
+3         deployed    pong-arena-0.1.0  v18          Rollback to 1
+```
+
+Helm tracks history per release, so `helm rollback pong 1` reverts every object
+at once - not just a Deployment's image, which is all `kubectl rollout undo`
+can do.
+
+And on uninstall, the StatefulSet's PVC survives:
+
+```
+data-pong-postgres-0  Bound
+```
+
+Same rule as Phase 9: Kubernetes will not delete your data to tidy up.
+
+### Helm vs plain manifests
+
+| | Plain YAML | Helm |
+|---|---|---|
+| Parameterisation | copy the file and edit it | one chart, many values files |
+| Config change triggers rollout | a script that hashes by hand | built in |
+| Rollback | per-object `kubectl rollout undo` | whole release, one command |
+| Learning value | you see exactly what is created | indirection hides it |
+
+The raw manifests in `k8s/` are kept deliberately - they are the readable
+version, and they are what the earlier phases teach against.

@@ -11,6 +11,8 @@ RUN npm run build
 # No Node.js at runtime at all - the output is just HTML/CSS/JS files, so a
 # static web server is both smaller and faster than running Vite in production.
 FROM nginx:1.27-alpine AS runtime
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY default.conf.template /etc/nginx/templates/default.conf.template
+ENV GAME_SERVER_HOST=game-server \
+    NGINX_ENVSUBST_FILTER=GAME_SERVER_HOST
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 8080

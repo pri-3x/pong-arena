@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels: {{- include "pong.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.gameServer.port | quote }}
+  # Service names are derived from the release name, so two releases in one
+  # namespace do not collide.
+  REDIS_HOST: {{ .Release.Name }}-redis
+  POSTGRES_HOST: {{ .Release.Name }}-postgres
+{{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}

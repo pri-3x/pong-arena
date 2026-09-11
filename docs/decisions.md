@@ -306,3 +306,29 @@ chaos test.
 reference the SHA.
 **Why:** a mutable tag makes "what is running in production?" unanswerable and
 rollback meaningless. An immutable tag makes both trivial.
+
+## ADR-033: Helm chart alongside, not replacing, the raw manifests
+**Decision:** keep `k8s/*.yaml` as the canonical deployment and add
+`charts/pong-arena` as a parameterised equivalent.
+**Why:** the raw manifests are what the project teaches against - they show
+exactly what is created, with no template indirection. The chart demonstrates
+parameterisation, release history and whole-release rollback.
+**Not duplicated forever:** in a real project one would win. Here they serve
+different purposes.
+
+## ADR-034: the chart references an existing Secret rather than templating one
+**Decision:** `existingSecret: pong-secrets`, created by
+`scripts/create-secrets.sh`.
+**Why:** templating a Secret means the value lives in a values file, and values
+files get committed. Referencing one keeps credentials outside the chart
+entirely.
+
+## ADR-035: nginx upstream host is injected, not hardcoded
+**Decision:** the web image reads `GAME_SERVER_HOST` and renders its config at
+container start via the nginx image's envsubst templating.
+**Why:** the hardcoded `proxy_pass http://game-server:3000` crash-looped as soon
+as Helm prefixed Service names with the release name
+(`host not found in upstream "game-server"`). Any assumption that a dependency
+has exactly one global name breaks the moment two copies exist.
+**Detail:** `NGINX_ENVSUBST_FILTER=GAME_SERVER_HOST` restricts substitution so
+nginx's own `$uri`, `$host` and `$http_upgrade` are not clobbered.

@@ -1,0 +1,40 @@
+{{- if .Values.redis.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-redis
+  labels: {{- include "pong.labels" . | nindent 4 }}
+spec:
+  replicas: 1                 # exactly one; two Redises would be two truths
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-redis
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-redis
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          ports: [{ containerPort: 6379 }]
+          resources: {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts: [{ name: data, mountPath: /data }]
+      volumes:
+        # emptyDir on purpose: everything Redis holds here is recreatable.
+        # See ADR-019.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis
+  labels: {{- include "pong.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}-redis
+  ports: [{ name: redis, port: 6379, targetPort: 6379 }]
+{{- end }}

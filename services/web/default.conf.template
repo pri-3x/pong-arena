@@ -1,3 +1,12 @@
+# Processed by the nginx image at container start: files in
+# /etc/nginx/templates are run through envsubst into /etc/nginx/conf.d.
+#
+# The upstream host must NOT be hardcoded. The Helm chart prefixes every
+# Service with the release name, so "game-server" becomes "pong-game-server"
+# and nginx fails to start with "host not found in upstream".
+#
+# NGINX_ENVSUBST_FILTER limits substitution to GAME_SERVER_HOST, so nginx's own
+# variables ($uri, $host, $http_upgrade) survive untouched.
 server {
   listen 8080;
   server_name _;
@@ -12,7 +21,7 @@ server {
   # WebSocket upgrade to the game server. Without these three headers nginx
   # would treat /ws as an ordinary HTTP request and the upgrade would fail.
   location /ws {
-    proxy_pass http://game-server:3000;
+    proxy_pass http://${GAME_SERVER_HOST}:3000;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -21,12 +30,12 @@ server {
   }
 
   location ~ ^/(config|stats|health|ready|cluster|matches|leaderboard)$ {
-    proxy_pass http://game-server:3000;
+    proxy_pass http://${GAME_SERVER_HOST}:3000;
     proxy_set_header Host $host;
   }
 
   location /auth/ {
-    proxy_pass http://game-server:3000;
+    proxy_pass http://${GAME_SERVER_HOST}:3000;
     proxy_set_header Host $host;
   }
 }
