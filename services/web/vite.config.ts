@@ -11,6 +11,8 @@ export default defineConfig({
     proxy: {
       "/ws": { target: "ws://localhost:3100", ws: true },
       "/auth": "http://localhost:3100",
+      "/matches": "http://localhost:3100",
+      "/leaderboard": "http://localhost:3100",
       "/config": "http://localhost:3100",
       "/stats": "http://localhost:3100",
       "/health": "http://localhost:3100",

@@ -3,12 +3,16 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-6 complete (service, containerization,
+> **Status:** in progress. Phases 1-7 complete (service, containerization,
 > Kubernetes Deployment, real-time server-authoritative Pong over WebSockets,
-> Redis-backed matchmaking across replicas, accounts + JWT auth on PostgreSQL).
+> Redis-backed matchmaking across replicas, accounts + JWT auth on PostgreSQL,
+> match history and leaderboard).
 >
-> **Known limitation:** PostgreSQL currently runs on `emptyDir`, so deleting its
-> Pod destroys all data. This is deliberate and is fixed in Phase 9.
+> **Known limitations**, both deliberate and both documented:
+> - PostgreSQL runs on `emptyDir`, so deleting its Pod destroys all data
+>   (fixed in Phase 9).
+> - If the Pod owning a match is hard-killed, the players are not notified and
+>   the result is not recorded (fixed in Phase 16).
 
 ## Repository layout
 
@@ -109,6 +113,8 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 | GET    | `/auth/me`       | requires `Authorization: Bearer <token>` |
 | GET    | `/health`  | liveness - checks nothing external                     |
 | GET    | `/ready`   | readiness - checks PostgreSQL and Redis                |
+| GET    | `/matches` | recent matches; `?username=` filters, `?limit=` capped at 100 |
+| GET    | `/leaderboard` | wins/losses/win rate, ranked; abandoned matches excluded |
 | GET    | `/whoami`  | `{"instance","uptimeSeconds","version"}` - which replica answered |
 | GET    | `/stats`   | this Pod's local view: rooms it owns, its connections, Redis status |
 | GET    | `/cluster` | cluster-wide view aggregated from every live Pod's presence record |

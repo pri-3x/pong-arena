@@ -58,3 +58,17 @@ kubectl exec -it deploy/postgres -- psql -U pong -d pong
 SELECT username, created_at FROM users;
 SELECT name FROM schema_migrations;
 ```
+
+## Queries
+
+**History** (`GET /matches`, optionally `?username=`) aggregates participants
+with `json_agg` so one query returns matches *and* their players. Fetching
+matches and then querying participants per match would be an N+1.
+
+**Leaderboard** (`GET /leaderboard`) counts wins and losses per user with
+`count(*) FILTER (WHERE mp.won)`, joined only to matches where
+`end_reason = 'win'`. Abandoned matches are stored and shown in history but
+excluded from ranking, so quitting cannot be farmed for wins.
+
+Both endpoints clamp `limit` server-side (max 100) - a client must never be able
+to ask for the whole table.

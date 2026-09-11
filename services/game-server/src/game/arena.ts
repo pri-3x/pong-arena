@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Room } from "./room.js";
 import type { Side } from "./physics.js";
 import { redis, type RedisWithMatch } from "../redis/client.js";
+import { recordMatch } from "../db/matches.js";
 import { POD_ID, sendToPlayer, sendInputToRoom, sendLeaveToRoom, type ToPlayer, type ToRoom } from "../redis/bus.js";
 
 const QUEUE_KEY = "mm:queue";
@@ -27,6 +28,8 @@ export interface Conn {
 
 export class Arena {
   private rooms = new Map<string, Room>();
+  /** Set by index.ts so failures to persist a result are logged, not swallowed. */
+  onPersistError: (err: unknown, roomId: string) => void = () => {};
   /** Locally connected players, so we can route messages arriving over Redis. */
   private local = new Map<string, Conn>();
 
@@ -81,7 +84,15 @@ export class Arena {
     }
 
     // Whoever completes the match OWNS the room and runs the simulation.
-    const room = new Room(randomUUID().slice(0, 8), (r) => this.rooms.delete(r.id));
+    const room = new Room(
+      randomUUID().slice(0, 8),
+      (r) => this.rooms.delete(r.id),
+      // Only the Pod that OWNS the room runs the loop, so only it fires this.
+      // That is what keeps a match from being written twice.
+      (result) => {
+        recordMatch(result).catch((e) => this.onPersistError(e, result.roomId));
+      }
+    );
     this.rooms.set(room.id, room);
 
     // The player who waited gets the left paddle.

@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "test": "npm run build && node test/physics.test.mjs && node test/match.test.mjs",
     "test:physics": "node test/physics.test.mjs",
-    "test:auth": "node test/auth.test.mjs"
+    "test:auth": "node test/auth.test.mjs",
+    "test:history": "node test/history.test.mjs",
+    "test:abandon": "node test/abandon.test.mjs"
   },
   "dependencies": {
     "@fastify/websocket": "^11.3.0",

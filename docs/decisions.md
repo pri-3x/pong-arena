@@ -101,3 +101,31 @@ it makes local two-player testing and demoing trivial.
 destroyed every account AND every table - `psql` reported "Did not find any
 relations." That is the concrete motivation for PersistentVolumes.
 **Revisit at:** Phase 9. This is not a defensible configuration for anything.
+
+## ADR-012: the Pod that owns the room writes the result
+**Decision:** the match result is persisted by the Pod running the simulation,
+in the single `finish()` path, wrapped in a transaction.
+**Why:** only one Pod runs the loop, so there is exactly one writer and no
+coordination is needed to avoid duplicate rows. A `finished` flag guards against
+`finish()` being called twice (win and disconnect can race).
+**Known gap - measured, not theoretical:** if that Pod is SIGKILLed mid-match
+the result is lost entirely. Demonstrated: a live match with 73 state updates,
+owner killed, neither player received `end`, and the recorded match count stayed
+at 2. This shares a root cause with the Phase 5 stranded-player gap; both are
+fixed by a room heartbeat in Redis plus a reaper, in Phase 16.
+
+## ADR-013: abandoned matches are stored but do not count for ranking
+**Decision:** a match that ends because someone disconnected is written to
+history with `end_reason = 'opponent_left'`, and the leaderboard query filters
+to `end_reason = 'win'` only.
+**Why:** the remaining player is told they won, which is the right in-game
+behaviour, but awarding a leaderboard win for an opponent quitting makes the
+ranking farmable - disconnect-on-losing would become a strategy.
+**Trade-off:** a player who genuinely loses connection is not penalised either,
+which is the more forgiving error.
+
+## ADR-014: aggregate participants in SQL, not in application code
+**Decision:** history queries use `json_agg` to build each match's player list
+inside Postgres.
+**Why:** the obvious implementation - fetch N matches, then query participants
+for each - is a classic N+1. One query returns everything.

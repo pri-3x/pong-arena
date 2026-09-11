@@ -437,3 +437,93 @@ too. The structure recovers on its own; the data does not.
 
 This is the concrete motivation for **Phase 9: PersistentVolume,
 PersistentVolumeClaim, StatefulSet.**
+
+## Phase 7 - Match history and leaderboard
+
+### One writer, one code path
+
+Both ways a match can end - somebody reaches 5, or somebody disconnects - now
+funnel through a single private `finish()` method on `Room`. It sets the final
+state, stops the loop, broadcasts `end`, and emits the result for persistence,
+guarded by a `finished` flag so a win and a disconnect racing cannot record the
+same match twice.
+
+Because only the Pod that *owns* a room runs its loop, there is exactly one
+writer per match. No distributed coordination is needed to avoid duplicates -
+the ownership model from Phase 5 gave us that for free.
+
+A `roster` was added alongside `players`: `players` is removed from when someone
+disconnects, but we still need to know who took part in order to record the
+match. Two maps, different lifetimes.
+
+### Transactions
+
+A `matches` row without its `match_players` rows is worse than no row at all -
+it would appear in history as a match with no participants. The insert is
+wrapped in BEGIN/COMMIT so either all three rows land or none do.
+
+### Avoiding N+1
+
+The obvious history implementation fetches N matches, then queries participants
+for each: 1 + N queries. Instead Postgres aggregates participants into JSON:
+
+```sql
+json_agg(json_build_object('username', u.username, 'side', mp.side,
+                           'score', mp.score, 'won', mp.won) ORDER BY mp.side)
+```
+
+One query, regardless of how many matches are returned.
+
+### A product decision encoded in a WHERE clause
+
+Abandoned matches are stored with `end_reason = 'opponent_left'` and appear in
+history, but the leaderboard joins only `end_reason = 'win'`. The remaining
+player is still told they won - that is correct in-game - but a leaderboard win
+for an opponent quitting would make disconnect-on-losing a winning strategy.
+
+Verified: after an abandoned match, ada's history shows it, and her win count
+went `1 -> 1`.
+
+### Verification
+
+19 assertions covering a full authenticated cross-pod match, persistence, and
+the query endpoints:
+
+```
+PASS  exactly one new match was recorded (0 -> 1)
+PASS  the stored room_id matches the played room (ca70a429)
+PASS  both usernames stored (local_ada, local_grace)
+PASS  the winner's stored score is 5
+PASS  local_ada: 1W 0L   /   local_grace: 0W 1L
+PASS  the leaderboard is sorted by wins
+PASS  ?username= returns only that player's matches
+PASS  limit is clamped server-side
+```
+
+Plus 6 covering abandonment, including that it does NOT add a leaderboard win.
+
+### The durability gap, measured
+
+If the Pod owning the simulation is SIGKILLed mid-match, the result is lost:
+
+```
+room dc9869d0 live, 73 state updates delivered
+roomsOwnedHere: pod-A=0 pod-B=1      <- pod-B owns it
+>>> SIGKILL pod-B
+players received: {"p1end":null,"p2end":null}     <- nobody was told
+matches before: 2   matches after: 2              <- nothing was written
+```
+
+This is the **same root cause** as the Phase 5 stranded-player gap: the owning
+Pod is a single point of failure for a match in progress, and pub/sub is
+fire-and-forget. One fix addresses both - a room heartbeat in Redis plus a
+reaper that finalises orphaned rooms. Deferred to Phase 16 rather than claimed
+as working.
+
+### Methodology note
+
+A test run through a single Service port-forward reported both players on the
+same Pod. That is a property of `kubectl port-forward svc/...`, which pins to
+one Pod - not a defect. The assertion now only runs when the two clients are
+actually pointed at different endpoints, and says so otherwise. A test that
+silently passes for the wrong reason is worse than no test.

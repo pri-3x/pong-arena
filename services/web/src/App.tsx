@@ -1,12 +1,20 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useGame } from "./useGame";
 import { useAuth } from "./useAuth";
 import { AuthPanel } from "./AuthPanel";
 import { Field } from "./Field";
+import { Stats } from "./Stats";
 
 export default function App() {
   const auth = useAuth();
   const g = useGame();
+
+  // Bumped whenever a match finishes, so the leaderboard and history reload
+  // exactly when there is something new to show.
+  const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => {
+    if (g.status === "finished") setRefreshKey((n) => n + 1);
+  }, [g.status]);
 
   // Keyboard -> paddle direction. We track which keys are physically down so
   // that releasing one key while holding the other keeps you moving.
@@ -85,6 +93,8 @@ export default function App() {
           </>
         )}
       </div>
+
+      <Stats me={auth.user?.username ?? null} refreshKey={refreshKey} />
     </div>
   );
 }

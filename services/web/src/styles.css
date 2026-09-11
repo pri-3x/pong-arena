@@ -45,3 +45,14 @@ kbd {
   font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer;
 }
 .link:hover { color: #94a3b8; background: none; }
+.stats { margin-top: 28px; border-top: 1px solid #131c26; padding-top: 16px; }
+.stats table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stats th {
+  text-align: left; font-weight: 500; color: #475569; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px 6px 0;
+}
+.stats td { padding: 5px 8px 5px 0; border-top: 1px solid #101822; }
+.stats tr.me td { color: #38bdf8; }
+.stats .dim { color: #475569; }
+.stats .good { color: #4ade80; font-size: 11px; letter-spacing: .06em; }
+.stats .bad { color: #f87171; font-size: 11px; letter-spacing: .06em; }

@@ -7,6 +7,7 @@ import { redis, redisHost } from "./redis/client.js";
 import { startPresence, clusterPresence } from "./redis/presence.js";
 import { migrate, dbHealthy, pool } from "./db/index.js";
 import { registerAuthRoutes } from "./auth/routes.js";
+import { recentMatches, matchesForUser, leaderboard } from "./db/matches.js";
 import { verifyToken } from "./auth/token.js";
 import * as C from "./game/constants.js";
 
@@ -24,6 +25,8 @@ app.log.info({ pendingMigrations: pending }, "database ready");
 registerAuthRoutes(app);
 
 const arena = new Arena();
+arena.onPersistError = (err, roomId) =>
+  app.log.error({ err, roomId }, "failed to record match result");
 
 // Route messages arriving from other Pods into this Pod's connections/rooms.
 await startBus({
@@ -60,6 +63,26 @@ app.get("/stats", async () => ({
   connections: connections.size,
   redis: { host: redisHost, status: redis.status, queueLength: await arena.queueLength().catch(() => -1) },
 }));
+
+/** Clamp a caller-supplied limit: never let a client ask for the whole table. */
+const clampLimit = (raw: unknown, fallback: number, max: number) => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), max) : fallback;
+};
+
+app.get("/matches", async (req) => {
+  const q = req.query as { limit?: string; username?: string };
+  const limit = clampLimit(q.limit, 20, 100);
+  const matches = q.username
+    ? await matchesForUser(q.username, limit)
+    : await recentMatches(limit);
+  return { matches };
+});
+
+app.get("/leaderboard", async (req) => {
+  const limit = clampLimit((req.query as { limit?: string }).limit, 20, 100);
+  return { leaderboard: await leaderboard(limit) };
+});
 
 /** Constants the client needs in order to draw the field at the right scale. */
 app.get("/config", async () => ({
