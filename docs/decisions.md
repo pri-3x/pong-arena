@@ -222,3 +222,26 @@ recover, so it should be evicted last. Stateless replicas are cheap to lose and
 are deliberately left Burstable so they can use spare capacity.
 **Values:** chosen to fit comfortably on a 10-core / 8Gi laptop with room for
 the HPA to scale game-server to ~8 replicas in Phase 13.
+
+## ADR-024: CPU-based HPA now, custom metrics later
+**Decision:** autoscale `game-server` on CPU utilisation at 60% of request,
+min 1 / max 8.
+**Why:** CPU is the only metric available without extra infrastructure, and it
+does correlate with load here - the 60Hz simulation loop is CPU-bound, so more
+matches means more CPU. Measured: 2 -> 8 Pods under 40 concurrent players.
+**Why CPU is nonetheless the wrong metric for a game server:** a Pod holding 200
+idle WebSocket connections uses almost no CPU but is close to its real capacity,
+while a Pod running three fast rallies looks busy. The honest signal is
+`active_games` or `connected_players`, which we already expose at `/stats` and
+`/cluster`.
+**Path forward:** Prometheus Adapter or KEDA can drive an HPA from a custom
+metric. Phase 15 adds Prometheus, which is the prerequisite.
+
+## ADR-025: asymmetric HPA behaviour
+**Decision:** `scaleUp` stabilisation 30s and up to 100% growth per 30s;
+`scaleDown` stabilisation 300s, one Pod per minute.
+**Why:** removing a Pod terminates the WebSocket connections it holds, so
+scale-down has a user-visible cost that scale-up does not. Wasting capacity for
+five minutes is cheaper than disconnecting players during a lull.
+**Related gap:** until the Phase 16 heartbeat work lands, a terminating Pod
+still drops in-progress matches rather than draining them.

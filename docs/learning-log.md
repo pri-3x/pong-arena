@@ -906,3 +906,100 @@ incompressible and undedupable, and the Pod was OOMKilled immediately.
 
 Worth remembering when benchmarking anything memory-related: **zeroed test data
 does not measure real memory pressure.**
+
+## Phase 13 - Horizontal Pod Autoscaling
+
+### Kubernetes does not measure CPU by default
+
+```
+$ kubectl top pods
+error: Metrics API not available
+```
+
+An HPA reads from the Metrics API, and nothing provides it out of the box.
+`metrics-server` has to be installed, and on this cluster it needs
+`--kubelet-insecure-tls` because the kubelet serves a self-signed certificate.
+
+This is the step most explanations skip, and it is why "Kubernetes
+automatically scales" is misleading: Kubernetes scales on numbers *somebody
+supplies*.
+
+### Utilization is a percentage of the REQUEST
+
+```yaml
+target:
+  type: Utilization
+  averageUtilization: 60      # 60% of the 100m CPU request, i.e. ~60m
+```
+
+Not a percentage of the limit, and not of the node. This is why Phase 12 had to
+come first: **a Pod with no CPU request cannot be autoscaled on CPU at all**,
+because there is no denominator.
+
+### Asymmetric behaviour, on purpose
+
+```yaml
+scaleUp:   stabilizationWindowSeconds: 30    # react fast
+scaleDown: stabilizationWindowSeconds: 300   # react slowly, 1 pod per minute
+```
+
+Scaling down is not the mirror image of scaling up. Removing a game-server Pod
+drops every WebSocket connection it was holding, so we would rather waste a
+little capacity for five minutes than disconnect players during a brief lull.
+
+### minReplicas: 1, not 0
+
+Scale-to-zero sounds attractive with no players, but for a WebSocket service
+there would be nothing running to *receive* the connection that triggers the
+scale-up. Knative and KEDA solve this with an activator that holds the request;
+a plain HPA cannot.
+
+## Phase 14 - Load testing with k6
+
+Full results: [docs/load-testing.md](load-testing.md).
+
+### HTTP load
+
+120 virtual users against `/leaderboard` and `/matches`:
+
+```
+31,254 requests    260 req/s    0 errors
+avg 188ms   p90 432ms   p95 670ms
+HPA: 2 -> 4 -> 5 pods
+```
+
+### WebSocket game load
+
+40 concurrent simulated players, each signing in and playing a real match:
+
+```
+142 matches started, 112 finished
+68,298 state messages received (439/s)
+100% WebSocket handshake success, 0 failed checks
+median time to find a match: 77ms
+```
+
+Live cluster state during the run, from `/cluster`:
+
+```
+t+ 28s  pods=5  players=20  games=10
+t+ 56s  pods=6  players=29  games=15
+t+ 84s  pods=8  players=41  games=19    <- maxReplicas
+```
+
+**41 concurrent players in 20 simultaneous matches across 8 Pods**, zero failed
+handshakes.
+
+The median time-to-match of 77ms with players spread across 8 Pods is only
+possible because the queue lives in Redis - this is Phase 5 paying off under
+real load.
+
+### Reading the numbers honestly
+
+- p95 time-to-match of 2.3s is **not latency**. It is a player waiting for an
+  opponent to exist. With an odd number of waiting players, somebody waits.
+- CPU reached 138% of target at peak. That is not a failure of the HPA - it was
+  already at `maxReplicas: 8` and had nothing left to do.
+- Both runs were cut short of their full plan when the shell running the
+  container timed out. The reported metrics cover the traffic that actually ran.
+  Nothing is extrapolated.

@@ -1,0 +1,42 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: game-server
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: game-server
+  # minReplicas 1, not 0. With no players we do not want to pay for idle Pods,
+  # but scale-to-zero would mean the first player waits for a cold start - and
+  # for a WebSocket service there is nothing to receive the connection that
+  # would trigger the scale-up.
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # 60% of the REQUEST (100m), i.e. scale up above ~60m per Pod.
+          # Utilization is always a percentage of requests, never of limits or
+          # of the node - which is why Phase 12 had to come first.
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      # React quickly to load, but not to a single noisy scrape.
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100          # at most double
+          periodSeconds: 30
+    scaleDown:
+      # Scale DOWN slowly. Every removed Pod drops the WebSocket connections it
+      # was holding, so we would rather waste a little capacity than disconnect
+      # players because of a brief lull.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1            # remove one Pod at a time
+          periodSeconds: 60
