@@ -1003,3 +1003,46 @@ real load.
 - Both runs were cut short of their full plan when the shell running the
   container timed out. The reported metrics cover the traffic that actually ran.
   Nothing is extrapolated.
+
+## Phase 15 - Observability
+
+Full notes: [docs/observability.md](observability.md).
+
+### Pull, not push
+
+Prometheus scrapes targets it discovers from the Kubernetes API, filtered to
+Pods carrying `prometheus.io/scrape: "true"`. The app never pushes anywhere, so
+a crashed Pod just stops appearing.
+
+### Four metric types, and when each is right
+
+- **Counter** (only up): requests, matches completed. Never averaged in the app -
+  `rate()` is computed at query time.
+- **Gauge** (up and down): active games, connected players, queue length.
+- **Histogram** (buckets): request duration, match duration.
+
+### Cardinality is the thing that kills Prometheus
+
+Requests are labelled with the **route pattern** (`/matches`), not the URL. One
+time series per distinct query string would be unbounded growth.
+
+### Verified against real load
+
+```
+sum(pong_active_games)                          16
+sum(pong_connected_players)                     35
+count(count by (pod) (pong_connected_players))   8
+p95 latency                                   0.25 s
+matches completed            win=89  opponent_left=35
+CPU per pod (cadvisor)          0.068 - 0.096 cores
+```
+
+### Two things that cost debugging time
+
+**cAdvisor scrape returned 403.** The ClusterRole needs `nodes/proxy`, not just
+`nodes`. Symptom is a target permanently `down`.
+
+**Every time series panel was blank while stat panels worked.** Grafana
+Prometheus targets need `"range": true`; without it they run as *instant*
+queries, the panel gets one data point, and a line chart of one point draws
+nothing. Stat panels want the opposite.

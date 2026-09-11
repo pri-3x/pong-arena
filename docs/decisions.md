@@ -245,3 +245,27 @@ scale-down has a user-visible cost that scale-up does not. Wasting capacity for
 five minutes is cheaper than disconnecting players during a lull.
 **Related gap:** until the Phase 16 heartbeat work lands, a terminating Pod
 still drops in-progress matches rather than draining them.
+
+## ADR-026: Prometheus pull-based scraping with annotation opt-in
+**Decision:** Prometheus discovers targets through the Kubernetes API and keeps
+only Pods annotated `prometheus.io/scrape: "true"`.
+**Why:** pull means a dead Pod simply stops being scraped, with no half-written
+pushes to reason about, and nothing is monitored by accident.
+**Gotcha found:** scraping cAdvisor through the API server needs `nodes/proxy`
+in the ClusterRole. Without it the target is permanently `down` with 403.
+
+## ADR-027: dashboards provisioned from git, not built in the UI
+**Decision:** the Grafana dashboard is a JSON file mounted as a ConfigMap.
+**Why:** a dashboard created in the UI lives only in Grafana's database and is
+lost when the Pod is replaced. As a file it is reviewable, diffable and
+reproducible.
+**Cost:** hand-writing panel JSON is error-prone - the first version left every
+time series blank because Prometheus targets need `"range": true` and default to
+instant queries.
+
+## ADR-028: /metrics is not exposed through the Ingress
+**Decision:** metrics are reachable only inside the cluster; Prometheus itself
+is not routed publicly either.
+**Why:** `/metrics` leaks Pod names, route names and traffic volumes, and
+Prometheus has no authentication at all. Grafana is exposed because it at least
+has a login, with anonymous access limited to Viewer.

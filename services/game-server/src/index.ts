@@ -8,6 +8,7 @@ import { startPresence, clusterPresence } from "./redis/presence.js";
 import { migrate, dbHealthy, pool } from "./db/index.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { recentMatches, matchesForUser, leaderboard } from "./db/matches.js";
+import * as metrics from "./metrics.js";
 import { verifyToken } from "./auth/token.js";
 import * as C from "./game/constants.js";
 
@@ -21,6 +22,31 @@ await app.register(websocket);
 // advisory lock makes sure only one actually applies them.
 const pending = await migrate((m) => app.log.info(m));
 app.log.info({ pendingMigrations: pending }, "database ready");
+
+// Record every HTTP request. `routerPath` is the ROUTE PATTERN (/matches),
+// not the concrete URL - using the raw URL would create a new time series per
+// distinct query string, which is the classic way to blow up a Prometheus
+// instance ("high cardinality").
+app.addHook("onResponse", async (req, reply) => {
+  const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? "unmatched";
+  if (route === "/metrics") return;                       // do not measure ourselves
+  const labels = { method: req.method, route, status: String(reply.statusCode) };
+  metrics.httpRequests.inc(labels);
+  metrics.httpDuration.observe(labels, reply.elapsedTime / 1000);
+});
+
+app.get("/metrics", async (_req, reply) => {
+  // Refresh gauges at scrape time rather than keeping them continuously
+  // updated: a gauge only has to be correct when it is read.
+  metrics.activeGames.set(arena.stats.activeGames);
+  metrics.connectedPlayers.set(connections.size);
+  try {
+    metrics.matchmakingQueue.set(await arena.queueLength());
+  } catch { /* Redis unavailable; leave the previous value */ }
+
+  reply.header("content-type", metrics.registry.contentType);
+  return metrics.registry.metrics();
+});
 
 registerAuthRoutes(app);
 

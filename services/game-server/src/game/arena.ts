@@ -3,6 +3,7 @@ import { Room } from "./room.js";
 import type { Side } from "./physics.js";
 import { redis, type RedisWithMatch } from "../redis/client.js";
 import { recordMatch } from "../db/matches.js";
+import { matchesCompleted, matchDuration } from "../redis/../metrics.js";
 import { POD_ID, sendToPlayer, sendInputToRoom, sendLeaveToRoom, type ToPlayer, type ToRoom } from "../redis/bus.js";
 
 const QUEUE_KEY = "mm:queue";
@@ -90,6 +91,8 @@ export class Arena {
       // Only the Pod that OWNS the room runs the loop, so only it fires this.
       // That is what keeps a match from being written twice.
       (result) => {
+        matchesCompleted.inc({ reason: result.endReason });
+        matchDuration.observe((result.endedAt.getTime() - result.startedAt.getTime()) / 1000);
         recordMatch(result).catch((e) => this.onPersistError(e, result.roomId));
       }
     );

@@ -16,10 +16,16 @@ spec:
     metadata:
       labels:
         app: game-server       # must match the selector above
+      annotations:
+        # Opt in to Prometheus scraping. The config keeps only pods carrying
+        # this, so nothing is scraped by accident.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: game-server
-          image: pong-game-server:v11
+          image: pong-game-server:v15
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -34,7 +40,7 @@ spec:
                 name: pong-secrets
           env:
             - name: APP_VERSION
-              value: "v11"
+              value: "v15"
             # The downward API: a fact about the Pod itself, not configuration,
             # so it stays here rather than in the ConfigMap.
             - name: POD_NAME

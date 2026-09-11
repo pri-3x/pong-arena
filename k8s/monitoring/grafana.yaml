@@ -1,0 +1,77 @@
+# Datasource and dashboards are PROVISIONED from files, not clicked together in
+# the UI. A dashboard built by hand lives only in Grafana's database and is lost
+# when the Pod is replaced; this one is in git and is recreated on every start.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: monitoring
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: pong
+        folder: ""
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.3.1
+          env:
+            - { name: GF_SECURITY_ADMIN_USER,  value: admin }
+            - { name: GF_SECURITY_ADMIN_PASSWORD, value: admin }
+            # Local learning cluster only: anonymous viewers so the dashboard
+            # can be opened without a login prompt.
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer }
+            - { name: GF_SERVER_ROOT_URL, value: "http://localhost/grafana" }
+            - { name: GF_SERVER_SERVE_FROM_SUB_PATH, value: "true" }
+          ports: [{ containerPort: 3000 }]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 300m, memory: 512Mi }
+          volumeMounts:
+            - { name: provisioning-ds, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: provisioning-db, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+        - name: provisioning-ds
+          configMap: { name: grafana-provisioning, items: [{ key: datasources.yaml, path: datasources.yaml }] }
+        - name: provisioning-db
+          configMap: { name: grafana-provisioning, items: [{ key: dashboards.yaml, path: dashboards.yaml }] }
+        - name: dashboards
+          configMap: { name: grafana-dashboards }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector: { app: grafana }
+  ports: [{ port: 3000, targetPort: 3000 }]
