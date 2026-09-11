@@ -71,6 +71,12 @@ spec:
           ports:
             - name: postgres
               containerPort: 5432
+          resources:
+            # Databases are given requests == limits (QoS class Guaranteed) so
+            # they are the LAST thing evicted when the node is under pressure.
+            # Everything else here is Burstable and will be sacrificed first.
+            requests: { cpu: 250m, memory: 512Mi }
+            limits:   { cpu: 250m, memory: 512Mi }
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "pong"]

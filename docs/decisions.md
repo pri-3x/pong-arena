@@ -212,3 +212,13 @@ healthy Pod with zero errors.
 and a slow boot is restarted in a loop, too long and a genuinely hung process is
 left running. A startup probe suppresses liveness until boot completes, then
 liveness runs at its normal fast cadence.
+
+## ADR-023: Guaranteed QoS for PostgreSQL, Burstable for everything else
+**Decision:** PostgreSQL gets `requests == limits` (250m CPU / 512Mi); the game
+server, web and Redis get requests well below their limits.
+**Why:** QoS class determines eviction order when a node is under memory
+pressure. The database is the one component whose loss is expensive and slow to
+recover, so it should be evicted last. Stateless replicas are cheap to lose and
+are deliberately left Burstable so they can use spare capacity.
+**Values:** chosen to fit comfortably on a 10-core / 8Gi laptop with room for
+the HPA to scale game-server to ~8 replicas in Phase 13.

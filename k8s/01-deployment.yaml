@@ -46,6 +46,23 @@ spec:
             - name: ALLOW_CHAOS
               value: "true"
 
+          resources:
+            # REQUESTS are what the scheduler reserves. The sum of all requests
+            # on a node cannot exceed its capacity, so this is what decides
+            # whether a Pod fits. It is also the baseline the HPA measures
+            # against in Phase 13 - without a CPU request there is no
+            # "percentage of CPU" to autoscale on.
+            requests:
+              cpu: 100m          # 0.1 of a core
+              memory: 128Mi
+            # LIMITS are a hard ceiling, and the two resources behave very
+            # differently at the ceiling:
+            #   CPU    is compressible -> the container is THROTTLED
+            #   memory is not          -> the container is OOMKilled
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
           # STARTUP probe: "has the process finished booting?"
           # While this is running, the liveness and readiness probes are held
           # off entirely. It exists so a slow start (migrations, warm-up) is not

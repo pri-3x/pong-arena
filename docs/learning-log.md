@@ -848,3 +848,61 @@ the probe failed. `kubectl describe` showed only `BackOff`, with no
 Redone with `nginx:alpine`, which starts cleanly, the probe was unambiguously
 the cause. **A test that produces the expected output for the wrong reason is
 worse than no test** - the same lesson as the port-forward mix-up in Phase 7.
+
+## Phase 12 - Resource requests and limits
+
+### Requests vs limits
+
+- **Requests** are what the scheduler *reserves*. The sum of requests on a node
+  cannot exceed its capacity, so requests decide whether a Pod fits at all. They
+  are also the baseline the HPA measures against - without a CPU request there
+  is no "percentage of CPU" to autoscale on.
+- **Limits** are a hard ceiling.
+
+### The asymmetry that matters
+
+CPU is **compressible**; memory is **not**.
+
+| | At the limit | Measured |
+|---|---|---|
+| CPU | throttled - you get less, container survives | `limit=100m` -> 109M iterations; `limit=1000m` -> 1149M. Both `Completed`. |
+| Memory | **OOMKilled**, SIGKILL, exit code 137 | allocating 300MB against a 100Mi limit -> `reason=OOMKilled exitCode=137`, logs stop at 76MB |
+
+There is no such thing as "throttling" memory. A process asking for a page that
+does not exist cannot be made to wait - it has to be killed.
+
+### QoS classes
+
+Kubernetes derives a class from what you set, and it decides eviction order when
+a node runs out of memory:
+
+| Class | Condition | Evicted |
+|---|---|---|
+| `Guaranteed` | requests == limits, for every resource | last |
+| `Burstable` | requests < limits | second |
+| `BestEffort` | nothing set | **first** |
+
+Before this phase every Pod here was `BestEffort` - the first thing the kubelet
+would kill. Now:
+
+```
+postgres-0     Guaranteed      <- the database should be the last thing sacrificed
+game-server    Burstable
+redis          Burstable
+web            Burstable
+```
+
+### A false negative, caught
+
+The first OOM test allocated 200MB of `Buffer.alloc` against a 100Mi limit and
+**completed successfully**. The limit was genuinely applied
+(`/sys/fs/cgroup/memory.max` read back exactly 104857600), and swap was disabled
+(`memory.swap.max: 0`), so neither explained it.
+
+The cause was the data: `Buffer.alloc` zero-fills, and 200 identical zero pages
+are trivially deduplicated by the kernel, so very little physical memory was
+ever used. Refilling each buffer with `crypto.randomFillSync` made the pages
+incompressible and undedupable, and the Pod was OOMKilled immediately.
+
+Worth remembering when benchmarking anything memory-related: **zeroed test data
+does not measure real memory pressure.**
