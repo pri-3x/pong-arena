@@ -53,6 +53,9 @@ registerAuthRoutes(app);
 const arena = new Arena();
 arena.onPersistError = (err, roomId) =>
   app.log.error({ err, roomId }, "failed to record match result");
+arena.onOrphanRecovered = (roomId) =>
+  app.log.warn({ roomId }, "match owner went away; released the local player");
+arena.startWatchdog();
 
 // Route messages arriving from other Pods into this Pod's connections/rooms.
 await startBus({
@@ -208,6 +211,7 @@ try {
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {
     app.log.info({ signal }, "shutting down");
+    arena.stopWatchdog();
     await stopPresence();
     await stopBus();
     await app.close();

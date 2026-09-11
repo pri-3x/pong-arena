@@ -23,9 +23,11 @@ spec:
         prometheus.io/port: "3000"
         prometheus.io/path: "/metrics"
     spec:
+      # preStop sleeps 8s, then the app needs time to close sockets cleanly.
+      terminationGracePeriodSeconds: 40
       containers:
         - name: game-server
-          image: pong-game-server:v15
+          image: pong-game-server:v16
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -40,7 +42,7 @@ spec:
                 name: pong-secrets
           env:
             - name: APP_VERSION
-              value: "v15"
+              value: "v16"
             # The downward API: a fact about the Pod itself, not configuration,
             # so it stays here rather than in the ConfigMap.
             - name: POD_NAME
@@ -51,6 +53,21 @@ spec:
             # Never set this outside a learning cluster.
             - name: ALLOW_CHAOS
               value: "true"
+
+          # When a Pod is deleted, two things happen CONCURRENTLY and in no
+          # guaranteed order: the kubelet starts terminating the container, and
+          # the endpoint controller removes the Pod from the Service. For a
+          # short window the Pod is still a routing target but already refusing
+          # connections, and requests sent there fail. Measured: 1 failure in 60
+          # requests.
+          #
+          # preStop runs BEFORE SIGTERM. Sleeping here keeps the Pod serving
+          # while the endpoint removal propagates, so it stops being routed to
+          # before it stops answering.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "8"]
 
           resources:
             # REQUESTS are what the scheduler reserves. The sum of all requests

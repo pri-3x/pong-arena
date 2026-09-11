@@ -8,7 +8,7 @@ export type ServerMsg =
   | { t: "start"; players: Record<Side, string> }
   | { t: "state"; k: number; b: [number, number]; p: [number, number]; s: [number, number] }
   | { t: "score"; score: Record<Side, number>; scored: Side }
-  | { t: "end"; winner: Side | null; score?: Record<Side, number>; reason: string }
+  | { t: "end"; winner: Side | null; score?: Record<Side, number>; reason: string; message?: string }
   | { t: "pong"; ts: number }
   | { t: "unauthorized"; message: string }
   | { t: "error"; message: string };

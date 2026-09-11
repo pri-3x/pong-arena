@@ -3,7 +3,8 @@ import { Room } from "./room.js";
 import type { Side } from "./physics.js";
 import { redis, type RedisWithMatch } from "../redis/client.js";
 import { recordMatch } from "../db/matches.js";
-import { matchesCompleted, matchDuration } from "../redis/../metrics.js";
+import { matchesCompleted, matchDuration } from "../metrics.js";
+import { startHeartbeat, clearBeat } from "../redis/heartbeat.js";
 import { POD_ID, sendToPlayer, sendInputToRoom, sendLeaveToRoom, type ToPlayer, type ToRoom } from "../redis/bus.js";
 
 const QUEUE_KEY = "mm:queue";
@@ -31,6 +32,50 @@ export class Arena {
   private rooms = new Map<string, Room>();
   /** Set by index.ts so failures to persist a result are logged, not swallowed. */
   onPersistError: (err: unknown, roomId: string) => void = () => {};
+  /** Set by index.ts to log orphaned-match recoveries. */
+  onOrphanRecovered: (roomId: string) => void = () => {};
+
+  private stopHeartbeat: (() => void) | null = null;
+
+  /**
+   * Start the room heartbeat. Rooms we own get a refreshed TTL key; rooms we
+   * merely relay for are checked, and if the owner has gone silent we end the
+   * match locally rather than leaving our player staring at a frozen board.
+   */
+  startWatchdog() {
+    this.stopHeartbeat = startHeartbeat({
+      ownedRooms: () =>
+        [...this.rooms.values()]
+          .filter((r) => r.state.phase === "playing" && r.startedAt)
+          .map((r) => ({ id: r.id, startedAt: r.startedAt! })),
+      remoteRooms: () =>
+        [...this.local.values()]
+          .filter((c) => c.remote)
+          .map((c) => ({ roomId: c.remote!.roomId })),
+      onOrphaned: (roomId) => this.finaliseOrphan(roomId),
+    });
+  }
+
+  stopWatchdog() { this.stopHeartbeat?.(); }
+
+  /**
+   * The Pod running this match has gone away. Tell our player, and release
+   * them so they can queue again.
+   */
+  private finaliseOrphan(roomId: string) {
+    for (const conn of this.local.values()) {
+      if (conn.remote?.roomId !== roomId) continue;
+      conn.send({
+        t: "end",
+        winner: null,
+        reason: "server_lost",
+        message: "the server running this match became unavailable",
+      });
+      conn.remote = null;
+      conn.side = null;
+      this.onOrphanRecovered(roomId);
+    }
+  }
   /** Locally connected players, so we can route messages arriving over Redis. */
   private local = new Map<string, Conn>();
 
@@ -91,6 +136,7 @@ export class Arena {
       // Only the Pod that OWNS the room runs the loop, so only it fires this.
       // That is what keeps a match from being written twice.
       (result) => {
+        void clearBeat(result.roomId);
         matchesCompleted.inc({ reason: result.endReason });
         matchDuration.observe((result.endedAt.getTime() - result.startedAt.getTime()) / 1000);
         recordMatch(result).catch((e) => this.onPersistError(e, result.roomId));

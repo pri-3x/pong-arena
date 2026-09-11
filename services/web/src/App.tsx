@@ -86,8 +86,12 @@ export default function App() {
 
             {g.status === "finished" && g.result && (
               <p className={iWon ? "good" : "bad"}>
-                {g.result.reason === "opponent_left" ? "Opponent left. " : ""}
-                {g.result.winner ? `${g.result.winner} wins.` : "No winner."} {iWon ? "You won!" : ""}
+                {g.result.reason === "server_lost"
+                  ? "The server running this match became unavailable. No result was recorded."
+                  : <>
+                      {g.result.reason === "opponent_left" ? "Opponent left. " : ""}
+                      {g.result.winner ? `${g.result.winner} wins.` : "No winner."} {iWon ? "You won!" : ""}
+                    </>}
               </p>
             )}
           </>

@@ -52,6 +52,8 @@ export function useGame() {
             snaps.current = { prev: c, curr: { ...c, score: [m.score.left, m.score.right], at: performance.now() } };
           }
           setResult({ winner: m.winner, reason: m.reason });
+          // A lost server leaves no valid room; clear side so "Play again" works.
+          if (m.reason === "server_lost") setSide(null);
           setStatus("finished");
           break;
         }

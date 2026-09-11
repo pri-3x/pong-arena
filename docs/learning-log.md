@@ -1046,3 +1046,108 @@ CPU per pod (cadvisor)          0.068 - 0.096 cores
 Prometheus targets need `"range": true`; without it they run as *instant*
 queries, the panel gets one data point, and a line chart of one point draws
 nothing. Stat panels want the opposite.
+
+## Phase 16 - Chaos testing, and paying off the Phase 5 debt
+
+Full results: [docs/failure-testing.md](failure-testing.md).
+
+### The heartbeat fix
+
+Since Phase 5 this project carried a measured defect: if the Pod simulating a
+match died abruptly, the player on the *other* Pod was never told. Pub/sub is
+fire-and-forget, so no message can announce a crash.
+
+The fix is a **lease**, not a message:
+
+- the owning Pod writes `room:<id>:alive` with a 6s TTL, refreshed every 2s
+- every Pod sweeps the rooms it is only relaying for; an expired key means the
+  owner is gone
+- the relaying Pod ends the match locally with `reason: "server_lost"` and
+  releases its player
+
+Before / after, same test, same force-delete:
+
+```
+Phase 7:  p1 msgs=[waiting,matched,start]              stranded forever
+Phase 16: p1 msgs=[waiting,matched,start,end,score]    reason="server_lost"
+```
+
+One deliberate choice: if **Redis** is unreachable the sweep assumes rooms are
+alive. Declaring every match dead because the coordination layer blinked would
+be much worse than a few seconds of delay.
+
+### A failure the chaos suite found
+
+Killing a Pod under live traffic lost **1 request in 60**. Not a fluke - a real
+race. Deleting a Pod starts two things concurrently and in no guaranteed order:
+the kubelet terminates the container, and the endpoint controller removes it
+from the Service. In between, the Pod is still a routing target but already
+refusing connections.
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command: ["sleep", "8"]
+```
+
+`preStop` runs *before* SIGTERM, so the Pod keeps serving while endpoint removal
+propagates. Re-measured: **80 requests, 80 x 200, zero failures.**
+
+### The result that validates Phase 11
+
+```
+PostgreSQL scaled to 0:
+  /ready -> 503   /health -> 200   total restarts: 0
+```
+
+A complete database outage caused **zero container restarts**. If liveness had
+checked the database, every game server would have been killed at once, every
+match dropped, and the Pods would have restart-looped until the database
+returned - converting a dependency outage into a total outage.
+
+### The result that validates Phase 9
+
+Restarting Redis lost the matchmaking state and nothing had to be repaired -
+presence keys are rewritten every 2s with a TTL, so the state rebuilt itself.
+Match history was untouched, because it lives in PostgreSQL.
+
+## Phase 17 - Rolling deployments and rollback
+
+An image whose process exits immediately was deployed under live traffic:
+
+```
+game-server-58bd956666-ltlvq  READY=0/1  CrashLoopBackOff  restarts=4
+game-server-64c6458ff5-cb946  READY=1/1  Running
+game-server-64c6458ff5-kvcxl  READY=1/1  Running
+
+deployment:  READY=2/2   UP-TO-DATE=1   AVAILABLE=2
+traffic:     100 requests, 100 x 200
+```
+
+`UP-TO-DATE=1, AVAILABLE=2` is the signature of a **stalled** rollout.
+Kubernetes created one new Pod, it never became Ready, and so it refused to
+remove either old Pod. A completely broken release produced **zero user-visible
+impact**.
+
+Rollback took one command and ~10 seconds.
+
+### The safety net needs BOTH parts
+
+`maxUnavailable: 0` alone is not enough, and neither is a readiness probe alone:
+
+- without `maxUnavailable: 0`, Kubernetes may remove a healthy Pod before the
+  replacement is ready
+- without a **readiness probe**, Kubernetes considers a container "available" as
+  soon as the process starts - so a container that starts and immediately
+  crashes would still count, and the healthy Pods would be removed
+
+Together they make a bad deploy a non-event.
+
+### maxSurge and maxUnavailable
+
+- `maxSurge: 1` - may temporarily run one extra Pod, so capacity never drops
+- `maxUnavailable: 0` - may never have fewer ready Pods than desired
+
+The cost is that a rollout needs room for one extra Pod, and is slightly slower.
+For a service holding long-lived WebSocket connections that is the right trade.

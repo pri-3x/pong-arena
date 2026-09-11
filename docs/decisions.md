@@ -269,3 +269,24 @@ is not routed publicly either.
 **Why:** `/metrics` leaks Pod names, route names and traffic volumes, and
 Prometheus has no authentication at all. Grafana is exposed because it at least
 has a login, with anonymous access limited to Viewer.
+
+## ADR-029: room heartbeat lease rather than a death notification
+**Decision:** the Pod owning a match refreshes `room:<id>:alive` with a 6s TTL;
+other Pods treat an expired key as "the owner is gone" and end the match locally
+with `reason: "server_lost"`.
+**Why:** pub/sub is fire-and-forget, so a crashing Pod cannot announce its own
+death. A lease inverts the problem - absence of a heartbeat is the signal, which
+works regardless of how the Pod died.
+**Deliberate bias:** if Redis is unreachable the sweep assumes rooms are ALIVE.
+A false "everyone is dead" during a Redis blip would be far more damaging than a
+few seconds of delayed cleanup.
+**Verified:** force-deleting the owning Pod now delivers `end` to the surviving
+player, where previously they were stranded indefinitely.
+
+## ADR-030: preStop sleep to close the endpoint-removal race
+**Decision:** `preStop: sleep 8`, with `terminationGracePeriodSeconds: 40`.
+**Why:** Pod termination and Service endpoint removal are concurrent and
+unordered. Measured 1 failed request in 60 when killing a Pod under load; the
+Pod was still a routing target while already refusing connections.
+**Verified:** 80 requests during a Pod kill, 80 successes, zero failures.
+**Cost:** every Pod deletion takes ~8s longer, which also slows rollouts.
