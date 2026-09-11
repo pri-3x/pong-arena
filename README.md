@@ -3,11 +3,11 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-9 complete (service, containerization,
+> **Status:** in progress. Phases 1-10 complete (service, containerization,
 > Kubernetes Deployment, real-time server-authoritative Pong over WebSockets,
 > Redis-backed matchmaking across replicas, accounts + JWT auth on PostgreSQL,
 > match history and leaderboard, configuration via ConfigMap/Secret,
-> PostgreSQL on a StatefulSet with persistent storage).
+> PostgreSQL on a StatefulSet with persistent storage, Ingress).
 >
 > **Known limitations**, documented rather than hidden:
 > - If the Pod owning a match is hard-killed, the players are not notified and
@@ -88,9 +88,12 @@ image. This takes the image from **1.66 GB to 210 MB**.
 ## Kubernetes
 
 ```bash
+# once: install the ingress controller
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/cloud/deploy.yaml
+
 ./scripts/create-secrets.sh     # once: generates POSTGRES_PASSWORD and JWT_SECRET
 ./scripts/apply.sh              # applies manifests, rolls Pods if config changed
-kubectl get deploy,rs,pods,svc
+kubectl get deploy,sts,pods,svc,ingress
 
 # external access (NodePort is not published to macOS on this cluster)
 kubectl port-forward svc/game-server 3100:3000
@@ -105,7 +108,8 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
   separate from the host Docker image store. Use `IfNotPresent`, which Docker
   Desktop resolves from the host store at pull time without a registry.
 - NodePort services are reachable inside the cluster but are **not** published to
-  macOS. Use `kubectl port-forward` until Ingress lands (Phase 10).
+  macOS. Docker Desktop *does* map `LoadBalancer` Services to localhost, which is
+  how the ingress controller is reachable on port 80.
 
 ## API
 

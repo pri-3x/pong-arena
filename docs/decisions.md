@@ -181,3 +181,16 @@ the wrong instinct: persistence is about whether data can be rebuilt, not about
 how important it feels.
 **Revisit if:** Redis ever holds something authoritative, e.g. if match results
 were buffered there before being written to PostgreSQL.
+
+## ADR-020: Ingress for external access, replacing kubectl port-forward
+**Decision:** install ingress-nginx and route by path at the Ingress rather than
+inside the web Pod's nginx.
+**Why:** port-forward is a developer tool, not an access method - it died
+repeatedly during Phases 6-9 whenever a Pod was replaced. The Ingress controller
+gets a LoadBalancer Service, which Docker Desktop maps to localhost:80, so the
+app has a stable address.
+**Critical detail:** `proxy-read-timeout` and `proxy-send-timeout` are raised to
+3600s. nginx defaults to 60s, which would silently disconnect every match after
+a minute. This is the most common way an Ingress breaks a WebSocket application.
+**Note:** a second host-less rule is included so `http://localhost` works
+without editing /etc/hosts; `pong.local` demonstrates host-based routing.

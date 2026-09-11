@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pong
+  annotations:
+    # WebSockets are long-lived. nginx's default proxy read timeout is 60s,
+    # which would silently cut every match after a minute of play. This is the
+    # single most common way an Ingress breaks a real-time application.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    # Host-based routing: this rule only applies to requests whose Host header
+    # is pong.local.
+    - host: pong.local
+      http: &routes
+        paths:
+          # Path rules are evaluated longest-prefix-first, not in file order,
+          # so "/" being last here is not what makes it the fallback.
+          - path: /ws
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /auth
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /matches
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /leaderboard
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /cluster
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /stats
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /config
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /ready
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          - path: /health
+            pathType: Prefix
+            backend: { service: { name: game-server, port: { number: 3000 } } }
+          # Everything else is the React app.
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: web, port: { number: 80 } } }
+    # A second rule with no host matches any Host header, so http://localhost
+    # works too without editing /etc/hosts. The YAML anchor above avoids
+    # repeating the whole path list.
+    - http: *routes

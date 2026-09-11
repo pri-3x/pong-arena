@@ -734,3 +734,54 @@ recovery, and one Pod - so any restart is downtime. For production you would
 normally use a managed database, or an operator (CloudNativePG, Zalando,
 Crunchy) that actually handles replication and backups. A StatefulSet gives you
 a Pod with a disk; it does not give you a database service.
+
+## Phase 10 - Ingress
+
+### What an Ingress is, and is not
+
+A **Service** gets traffic to a set of Pods. An **Ingress** is an HTTP router in
+front of Services: it inspects the Host header and URL path and decides which
+Service to send the request to. One entry point, many backends.
+
+An Ingress is only a set of rules. Something has to implement them - an
+**ingress controller**. We installed ingress-nginx, which is itself a Deployment
+plus a LoadBalancer Service. Docker Desktop maps that to `localhost:80`, so the
+app finally has a stable address and `kubectl port-forward` is gone.
+
+```
+            localhost:80
+                 |
+        ingress-nginx controller
+                 |
+     +-----------+------------------+
+     | /ws /auth /matches ...       | /
+     v                              v
+  game-server:3000               web:80
+```
+
+### The detail that breaks real-time apps
+
+```yaml
+nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+```
+
+nginx defaults to a 60 second proxy read timeout. Without these annotations
+every match would be silently disconnected after a minute of play, and it would
+look like an application bug. Verified by playing a full authenticated match
+over WebSockets through the Ingress: 19/19 assertions passed.
+
+### Ingress vs Service
+
+| | Service | Ingress |
+|---|---|---|
+| Layer | TCP/UDP (L4) | HTTP (L7) |
+| Routes by | label selector | Host header and URL path |
+| Gives you | a stable in-cluster address | one external entry point for many Services |
+| Needs | nothing extra | a controller to implement it |
+
+### Path routing
+
+Paths are matched **longest-prefix-first**, not in file order. `/` being last in
+the YAML is not what makes it the fallback - it is the fallback because every
+other rule is a longer prefix.
