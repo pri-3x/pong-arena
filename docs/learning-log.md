@@ -1151,3 +1151,72 @@ Together they make a bad deploy a non-event.
 
 The cost is that a rollout needs room for one extra Pod, and is slightly slower.
 For a service holding long-lived WebSocket connections that is the right trade.
+
+## Phase 18 - CI/CD
+
+The pipeline is in [.github/workflows/ci.yml](../.github/workflows/ci.yml):
+
+```
+push / PR
+   |
+   v
+ test job          real Redis + PostgreSQL as GitHub Actions services
+   |               build -> physics -> auth -> cross-replica -> history
+   v
+ images job        only on main, only after tests pass
+   |               build and push to ghcr.io, tagged with the commit SHA
+   v
+ (deploy)
+```
+
+### Real dependencies, not mocks
+
+The integration tests genuinely need a Redis and a PostgreSQL, so the workflow
+declares them as `services:` with health checks. Mocking them would test the
+mocks: the entire point of `redis.test.mjs` is that two *separate processes*
+coordinate through one real Redis.
+
+### Tag with the commit SHA, never only `:latest`
+
+A mutable tag makes it impossible to know what is actually running, and makes
+rollback meaningless - "roll back to :latest" means nothing if :latest just
+moved.
+
+`secrets.GITHUB_TOKEN` is injected by Actions and scoped to the repository, so
+no long-lived registry credential is stored anywhere.
+
+### Running CI locally found five real bugs
+
+The pipeline was validated by running its exact sequence locally before
+committing it. That is where it earned its keep.
+
+**1. `redis.test.mjs` was stale.** It still joined with `{t:"join", name}`,
+replaced by tokens in Phase 6. The test had not been run since auth landed.
+
+**2. Heartbeat startup race.** The heartbeat interval fires every 2s, so a room
+created just after a tick had no `alive` key for up to two seconds - and the
+other Pod's sweep, on its own 2s timer, could look during that window and
+declare a brand new match orphaned. Fixed by writing the first beat inside
+`join()`, before anyone is told the room exists.
+
+**3. Spurious `server_lost` after every normal match.** When a match ended
+properly the owner deleted its heartbeat key (correctly), but the relaying Pod
+never cleared `conn.remote`. Two seconds later its sweep found the missing key,
+concluded the owner had died, and delivered a SECOND `end` with
+`reason: "server_lost"` - overwriting the real result. Winners were being
+reported as `null`. Fixed by clearing `conn.remote` when an `end` is relayed.
+
+**4. A test that could not pass.** `history.test.mjs` compared `/matches`
+(default limit 20) against `/matches?limit=5` and expected the counts to differ
+by one. It worked only while fewer than 20 matches existed. Rewritten to
+identify the new match by id.
+
+**5. Leaderboard assertions assumed a small dataset.** After load testing
+created 40 bot accounts, the two players under test were no longer in the
+default top 20. Fixed by paging explicitly and asserting the ordering property
+rather than a specific first row.
+
+Bugs 2 and 3 were in the Phase 16 heartbeat - code that had already passed a
+manual chaos test. **The manual test exercised only the failure path; the
+automated suite exercised the normal path, which is where the bugs were.** That
+is the argument for CI in one sentence.

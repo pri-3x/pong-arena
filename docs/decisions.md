@@ -290,3 +290,19 @@ unordered. Measured 1 failed request in 60 when killing a Pod under load; the
 Pod was still a routing target while already refusing connections.
 **Verified:** 80 requests during a Pod kill, 80 successes, zero failures.
 **Cost:** every Pod deletion takes ~8s longer, which also slows rollouts.
+
+## ADR-031: CI runs integration tests against real Redis and PostgreSQL
+**Decision:** GitHub Actions `services:` provide real containers; nothing is
+mocked.
+**Why:** the properties under test are cross-process - two server instances
+coordinating through one Redis. A mock would assert that the mock behaves as
+written, which is exactly the thing that cannot fail.
+**Evidence it matters:** validating this pipeline locally surfaced five real
+defects, two of them in the Phase 16 heartbeat that had already passed a manual
+chaos test.
+
+## ADR-032: images tagged with the commit SHA
+**Decision:** push `:${{ github.sha }}` alongside `:latest`; deployments
+reference the SHA.
+**Why:** a mutable tag makes "what is running in production?" unanswerable and
+rollback meaningless. An immutable tag makes both trivial.

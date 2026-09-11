@@ -38,7 +38,11 @@ function bot(base, token, aimErrorPx) {
 const t1 = await login(A, U1, "lovelace-1815");
 const t2 = await login(B, U2, "hopper-1906");
 
-const before = await (await fetch(A + "/matches")).json();
+// Record the ids that already exist so the new one can be identified, rather
+// than comparing counts - counting breaks as soon as the table exceeds the
+// page limit, and compares different limits against each other.
+const before = await (await fetch(A + "/matches?limit=100")).json();
+const beforeIds = new Set(before.matches.map((m) => m.id));
 const p1 = bot(A, t1, 0);        // never misses
 await sleep(400);
 const p2 = bot(B, t2, 70);       // misses often
@@ -54,10 +58,11 @@ check(p1.end?.winner === p1.side, `the accurate bot won (winner=${p1.end?.winner
 
 await sleep(1200);  // the owning pod writes asynchronously
 
-const { matches } = await (await fetch(A + "/matches?limit=5")).json();
-check(matches.length === before.matches.length + 1, `exactly one new match was recorded (${before.matches.length} -> ${matches.length})`);
+const { matches } = await (await fetch(A + "/matches?limit=100")).json();
+const fresh = matches.filter((x) => !beforeIds.has(x.id));
+check(fresh.length === 1, `exactly one new match was recorded (found ${fresh.length} new)`);
 
-const m = matches[0];
+const m = fresh[0] ?? matches[0];
 check(m?.room_id === p1.room, `the stored room_id matches the played room (${m?.room_id})`);
 check(m?.end_reason === "win", `end_reason is "win" (got ${m?.end_reason})`);
 check(m?.players?.length === 2, "two participants were stored");
@@ -68,14 +73,17 @@ check(winner?.username === U1, `the winner row is ${U1} (got ${winner?.username}
 check(winner?.score === 5, `the winner's stored score is 5 (got ${winner?.score})`);
 check(new Date(m.ended_at) > new Date(m.started_at), "ended_at is after started_at");
 
-const { leaderboard } = await (await fetch(A + "/leaderboard")).json();
+// Ask for a large page: on a cluster that has run load tests there are dozens
+// of accounts, and the two players under test may not be in the top 20.
+const { leaderboard } = await (await fetch(A + "/leaderboard?limit=100")).json();
 const row1 = leaderboard.find((r) => r.username === U1);
 const row2 = leaderboard.find((r) => r.username === U2);
 check(!!row1 && !!row2, "both players appear on the leaderboard");
 check(row1?.wins >= 1 && row1?.losses === 0, `${U1}: ${row1?.wins}W ${row1?.losses}L`);
 check(row2?.losses >= 1 && row2?.wins === 0, `${U2}: ${row2?.wins}W ${row2?.losses}L`);
 check(row1?.win_rate === 100, `${U1} win rate is 100% (got ${row1?.win_rate})`);
-check(leaderboard[0].username === U1, "the leaderboard is sorted by wins");
+const wins = leaderboard.map((r) => r.wins);
+check(wins.every((w, i) => i === 0 || wins[i - 1] >= w), "the leaderboard is sorted by wins descending");
 
 const mine = await (await fetch(`${A}/matches?username=${U1}&limit=50`)).json();
 check(mine.matches.length >= 1 && mine.matches.every((x) => x.players.some((pl) => pl.username === U1)),

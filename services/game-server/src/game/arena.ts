@@ -4,7 +4,7 @@ import type { Side } from "./physics.js";
 import { redis, type RedisWithMatch } from "../redis/client.js";
 import { recordMatch } from "../db/matches.js";
 import { matchesCompleted, matchDuration } from "../metrics.js";
-import { startHeartbeat, clearBeat } from "../redis/heartbeat.js";
+import { startHeartbeat, clearBeat, beat } from "../redis/heartbeat.js";
 import { POD_ID, sendToPlayer, sendInputToRoom, sendLeaveToRoom, type ToPlayer, type ToRoom } from "../redis/bus.js";
 
 const QUEUE_KEY = "mm:queue";
@@ -198,6 +198,16 @@ export class Arena {
       conn.remote = { roomId: p.roomId, ownerPod: p.ownerPod };
       conn.side = p.side;
       conn.ticket = null;
+    } else if (p.t === "end") {
+      // The match finished normally. Stop tracking it as a remote room.
+      //
+      // Without this the orphan sweep keeps watching a room whose owner has
+      // (correctly) deleted its heartbeat key on finish, decides the owner
+      // died, and delivers a SPURIOUS second `end` with reason "server_lost"
+      // a couple of seconds after the real result. Found by the integration
+      // tests: winners were being reported as null.
+      conn.remote = null;
+      conn.side = null;
     }
     conn.send(payload);
   }
