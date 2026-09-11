@@ -1,0 +1,21 @@
+# Non-sensitive configuration.
+#
+# The test for "does this belong in a ConfigMap?" is not "is it a string?" but
+# "would I mind this appearing in a screenshot?" Hostnames, ports and log levels
+# are fine. Passwords are not.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pong-config
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  PORT: "3000"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "pong"
+  POSTGRES_DB: "pong"
+  POSTGRES_POOL_MAX: "10"
+  JWT_TTL: "24h"

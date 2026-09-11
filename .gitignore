@@ -3,3 +3,8 @@ dist/
 .env
 .DS_Store
 *.log
+
+# Generated secrets must never be committed. Use scripts/create-secrets.sh.
+k8s/secret.yaml
+k8s/*-secret.yaml
+.env.local

@@ -30,14 +30,24 @@ spec:
           image: postgres:16-alpine
           imagePullPolicy: IfNotPresent
           env:
+            # Only the keys this container actually needs, pulled individually
+            # rather than with envFrom. The ConfigMap also carries REDIS_HOST
+            # and friends, which mean nothing to PostgreSQL.
             - name: POSTGRES_USER
-              value: pong
-            # TODO(phase 8): a password does not belong in a manifest that is
-            # committed to git. This moves to a Kubernetes Secret.
-            - name: POSTGRES_PASSWORD
-              value: pong_dev_password
+              valueFrom:
+                configMapKeyRef:
+                  name: pong-config
+                  key: POSTGRES_USER
             - name: POSTGRES_DB
-              value: pong
+              valueFrom:
+                configMapKeyRef:
+                  name: pong-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pong-secrets
+                  key: POSTGRES_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:

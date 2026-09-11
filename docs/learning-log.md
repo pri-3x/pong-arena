@@ -527,3 +527,99 @@ same Pod. That is a property of `kubectl port-forward svc/...`, which pins to
 one Pod - not a defect. The assertion now only runs when the two clients are
 actually pointed at different endpoints, and says so otherwise. A test that
 silently passes for the wrong reason is worse than no test.
+
+## Phase 8 - ConfigMaps and Secrets
+
+### The split
+
+`ConfigMap` holds settings; `Secret` holds credentials. The useful test is not
+"is it a string?" but **"would I mind this appearing in a screenshot?"**
+
+The game server uses `envFrom` to pull in every key from both objects at once,
+so adding a setting later means editing one ConfigMap rather than every
+Deployment. PostgreSQL pulls individual keys with `configMapKeyRef` /
+`secretKeyRef`, because the ConfigMap also carries `REDIS_HOST` and friends,
+which mean nothing to a database.
+
+`POD_NAME` stays as an inline `fieldRef`. It is a fact about the Pod, not
+configuration.
+
+### Secrets are base64, not encryption
+
+Demonstrated rather than asserted:
+
+```
+$ kubectl get secret pong-secrets -o jsonpath='{.data.JWT_SECRET}' | base64 -d
+af8a5bcc6a0895a1c35b4145…
+```
+
+What a Secret really buys you: it is a separate object that can be kept out of
+git, it is covered by RBAC separately from ConfigMaps, and its values are not
+echoed in `kubectl describe pod`. What it does not buy you: encryption at rest
+(etcd stores it base64 unless the cluster has an `EncryptionConfiguration`), or
+any protection from someone who can read Secrets in the namespace.
+
+For anything real the Secret object is a *delivery mechanism*, not storage:
+External Secrets Operator, Sealed Secrets, SOPS, or cloud IAM.
+
+### Secrets already in git cannot be un-committed
+
+The Phase 6 manifests had real values in plain text, and `git log -S` finds them
+in `b16fdd7` permanently. Deleting them from HEAD is not a fix. **Rotation is.**
+`scripts/create-secrets.sh` generated new values, so the committed ones are now
+dead. The habit that generalises: once a secret has been pushed anywhere, assume
+it is public.
+
+### Changing a ConfigMap does NOT restart Pods
+
+This is the practical trap of the phase:
+
+```
+ConfigMap now says: debug
+LOG_LEVEL in the pod: info      <- 8 seconds later, same Pod, 0 new restarts
+```
+
+Environment variables are injected once, at container start. (A ConfigMap
+mounted as a *volume* does update in place after a sync delay; env vars never
+do.)
+
+The fix used here is a **checksum annotation** on the Pod template. When the
+config changes the checksum changes, the template changes, and the Deployment
+performs an ordinary rolling update:
+
+```
+LOG_LEVEL info -> debug   checksum 08ce36c540812483 -> 6cde5f8bad87b433   pods replaced
+no change                 checksum unchanged                              pods untouched
+```
+
+Helm automates this with `checksum/config` annotations (Phase 19).
+
+### Rotation, measured
+
+```
+token before rotation: 200
+>>> JWT_SECRET af8a5bcc6a08… -> 8bb86b0bbe22…
+the SAME token:        401      <- every session invalidated
+signing in again:      200
+```
+
+A subtlety worth knowing: **rotating `POSTGRES_PASSWORD` does not change an
+existing database's password.** PostgreSQL reads that variable only when it
+initialises an empty data directory. On a real database you would
+`ALTER USER ... WITH PASSWORD` and then update the Secret.
+
+### Gotcha: apply overwrites patch
+
+`kubectl patch configmap` then `scripts/apply.sh` silently loses the patch,
+because apply re-applies the file. This cost real debugging time - the checksum
+refused to change and the symptom looked like a broken script. It is the same
+lesson as `kubectl set image` versus `kubectl apply` in Phase 3: **the YAML file
+is the source of truth.**
+
+### emptyDir, a third time
+
+Changing the postgres Secret reference replaced the Pod, and every user and
+match was destroyed again. The schema came back on its own, because the game
+servers re-run migrations on boot. The data did not.
+
+Phase 9 is next, and at this point it is well earned.

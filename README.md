@@ -3,10 +3,10 @@
 Scalable real-time multiplayer Pong platform built with Docker, Kubernetes,
 WebSockets, Redis and PostgreSQL.
 
-> **Status:** in progress. Phases 1-7 complete (service, containerization,
+> **Status:** in progress. Phases 1-8 complete (service, containerization,
 > Kubernetes Deployment, real-time server-authoritative Pong over WebSockets,
 > Redis-backed matchmaking across replicas, accounts + JWT auth on PostgreSQL,
-> match history and leaderboard).
+> match history and leaderboard, configuration via ConfigMap/Secret).
 >
 > **Known limitations**, both deliberate and both documented:
 > - PostgreSQL runs on `emptyDir`, so deleting its Pod destroys all data
@@ -19,6 +19,7 @@ WebSockets, Redis and PostgreSQL.
 ```
 services/game-server/    Node.js + TypeScript game service (HTTP + WebSocket)
 services/web/            React + TypeScript + Vite client
+scripts/                 create-secrets.sh, apply.sh
 docker-compose.yml       local backing services (Redis, PostgreSQL) for development
 k8s/                     Kubernetes manifests
 docs/                    Architecture notes, runbooks, learning log
@@ -86,7 +87,8 @@ image. This takes the image from **1.66 GB to 210 MB**.
 ## Kubernetes
 
 ```bash
-kubectl apply -f k8s/
+./scripts/create-secrets.sh     # once: generates POSTGRES_PASSWORD and JWT_SECRET
+./scripts/apply.sh              # applies manifests, rolls Pods if config changed
 kubectl get deploy,rs,pods,svc
 
 # external access (NodePort is not published to macOS on this cluster)
@@ -127,4 +129,5 @@ Docker Desktop Kubernetes (kind-based provisioner, node `desktop-control-plane`)
 - [WebSocket protocol](docs/websocket-protocol.md)
 - [Redis keys and channels](docs/redis-keys.md)
 - [Database schema](docs/database-schema.md)
+- [Configuration and secrets](docs/configuration.md)
 - [Architecture decisions](docs/decisions.md)

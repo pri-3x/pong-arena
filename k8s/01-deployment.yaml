@@ -19,39 +19,25 @@ spec:
     spec:
       containers:
         - name: game-server
-          image: pong-game-server:v7
+          image: pong-game-server:v8
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
+          # Non-sensitive settings come from the ConfigMap, the two secrets from
+          # the Secret. `envFrom` injects every key in each as an environment
+          # variable, so adding config later means editing one ConfigMap rather
+          # than every Deployment that needs it.
+          envFrom:
+            - configMapRef:
+                name: pong-config
+            - secretRef:
+                name: pong-secrets
           env:
-            - name: PORT
-              value: "3000"
             - name: APP_VERSION
-              value: "v7"
-            # Service discovery by NAME, never by IP. CoreDNS resolves this to
-            # whatever Pod the redis Service currently points at.
-            - name: REDIS_HOST
-              value: "redis"
-            - name: REDIS_PORT
-              value: "6379"
-            # The "downward API": Kubernetes injects facts about the Pod itself
-            # into the container. We use the real Pod name as this process's
-            # address on the Redis message bus.
+              value: "v8"
+            # The downward API: a fact about the Pod itself, not configuration,
+            # so it stays here rather than in the ConfigMap.
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: POSTGRES_HOST
-              value: "postgres"
-            - name: POSTGRES_PORT
-              value: "5432"
-            - name: POSTGRES_USER
-              value: "pong"
-            - name: POSTGRES_DB
-              value: "pong"
-            # TODO(phase 8): these two are secrets and must move to a
-            # Kubernetes Secret rather than sitting in a committed manifest.
-            - name: POSTGRES_PASSWORD
-              value: "pong_dev_password"
-            - name: JWT_SECRET
-              value: "dev-only-insecure-secret-change-me"
