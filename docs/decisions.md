@@ -194,3 +194,21 @@ app has a stable address.
 a minute. This is the most common way an Ingress breaks a WebSocket application.
 **Note:** a second host-less rule is included so `http://localhost` works
 without editing /etc/hosts; `pong.local` demonstrates host-based routing.
+
+## ADR-021: liveness checks nothing, readiness checks everything
+**Decision:** `/health` (liveness) has no external dependencies; `/ready`
+(readiness) checks PostgreSQL and Redis.
+**Why:** a liveness probe that checks the database converts a database blip into
+a cluster-wide restart storm, killing every in-progress match. The correct
+reaction to a broken dependency is to stop receiving traffic, which is what a
+readiness failure does.
+**Verified:** an unready Pod was removed from the Service endpoints with
+`RESTARTS=0` and kept running; 12 requests through the Ingress all reached the
+healthy Pod with zero errors.
+
+## ADR-022: startupProbe rather than a long initialDelaySeconds
+**Decision:** use a `startupProbe` with `failureThreshold: 30, periodSeconds: 2`.
+**Why:** `initialDelaySeconds` on the liveness probe is a fixed guess - too short
+and a slow boot is restarted in a loop, too long and a genuinely hung process is
+left running. A startup probe suppresses liveness until boot completes, then
+liveness runs at its normal fast cadence.

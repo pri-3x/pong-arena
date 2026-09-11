@@ -42,11 +42,28 @@ app.get("/health", async () => ({ status: "ok" }));
 // Readiness: "can this process do useful work?" This one SHOULD check
 // dependencies, because the right response to a broken dependency is to stop
 // receiving traffic, not to be restarted. Wired to a probe in Phase 11.
+let forceUnready = false;
+
 app.get("/ready", async (_req, reply) => {
+  if (forceUnready) {
+    return reply.code(503).send({ ok: false, reason: "manually marked unready" });
+  }
   const [db, redisOk] = [await dbHealthy(), redis.status === "ready"];
   const ok = db && redisOk;
   return reply.code(ok ? 200 : 503).send({ ok, postgres: db, redis: redisOk });
 });
+
+/**
+ * Test hook: flip this Pod to "not ready" so we can watch Kubernetes pull it
+ * out of the Service without killing it. Only enabled when ALLOW_CHAOS is set,
+ * which the production manifests do not set.
+ */
+if (process.env.ALLOW_CHAOS === "true") {
+  app.post("/debug/unready", async (req) => {
+    forceUnready = (req.query as { on?: string }).on !== "false";
+    return { forceUnready };
+  });
+}
 
 app.get("/whoami", async () => ({
   instance: os.hostname(),

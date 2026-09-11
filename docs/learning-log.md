@@ -785,3 +785,66 @@ over WebSockets through the Ingress: 19/19 assertions passed.
 Paths are matched **longest-prefix-first**, not in file order. `/` being last in
 the YAML is not what makes it the fallback - it is the fallback because every
 other rule is a longer prefix.
+
+## Phase 11 - Health probes
+
+### Three probes, three different questions
+
+| Probe | Question | On failure | Checks dependencies? |
+|---|---|---|---|
+| `startupProbe` | "has it finished booting?" | restart, but only after `failureThreshold` | no |
+| `livenessProbe` | "is it alive?" | **restart the container** | **no** |
+| `readinessProbe` | "can it serve traffic?" | **remove from Service endpoints** | **yes** |
+
+The startup probe holds the other two off entirely while it runs, so a slow boot
+(migrations, warm-up) is not mistaken for a hang and restarted in a loop.
+
+### Why liveness must NOT check the database
+
+This is the rule that matters. `/health` deliberately checks nothing external.
+If liveness checked PostgreSQL, a database blip would make Kubernetes restart
+*every* healthy game server simultaneously - turning a small dependency outage
+into a total outage, and dropping every in-progress match along the way.
+
+`/ready` does check PostgreSQL and Redis, because the correct response to a
+broken dependency is to stop taking traffic, not to die.
+
+### Readiness failure, demonstrated
+
+Marked one Pod unready via a debug hook:
+
+```
+READY=0/1   STATUS=Running   RESTARTS=0        <- not killed, just deregistered
+
+endpoints:
+  10.244.0.85  ready=false
+  10.244.0.86  ready=true
+
+12 requests through the Ingress -> 12 served by the healthy pod, 0 errors
+```
+
+The Pod kept running the whole time. Had this been a real dependency problem, it
+could recover and rejoin without ever being restarted.
+
+### Liveness failure, demonstrated
+
+```
+Liveness probe failed: HTTP probe failed with statuscode: 404
+Container app failed liveness probe, will be restarted
+STATUS=CrashLoopBackOff  RESTARTS=4
+```
+
+Note `CrashLoopBackOff` - Kubernetes backs off exponentially rather than
+restarting in a tight loop, which is why RESTARTS climbed unevenly.
+
+### A confounded test, caught
+
+The first liveness demo used the game-server image with no database
+configuration. It did go to `CrashLoopBackOff`, but for the wrong reason - the
+process was exiting because `migrate()` could not reach PostgreSQL, not because
+the probe failed. `kubectl describe` showed only `BackOff`, with no
+`Liveness probe failed` event, which is what gave it away.
+
+Redone with `nginx:alpine`, which starts cleanly, the probe was unambiguously
+the cause. **A test that produces the expected output for the wrong reason is
+worse than no test** - the same lesson as the port-forward mix-up in Phase 7.

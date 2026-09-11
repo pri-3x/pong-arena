@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: game-server
-          image: pong-game-server:v8
+          image: pong-game-server:v11
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -34,10 +34,45 @@ spec:
                 name: pong-secrets
           env:
             - name: APP_VERSION
-              value: "v8"
+              value: "v11"
             # The downward API: a fact about the Pod itself, not configuration,
             # so it stays here rather than in the ConfigMap.
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # Enables POST /debug/unready so probe behaviour can be demonstrated.
+            # Never set this outside a learning cluster.
+            - name: ALLOW_CHAOS
+              value: "true"
+
+          # STARTUP probe: "has the process finished booting?"
+          # While this is running, the liveness and readiness probes are held
+          # off entirely. It exists so a slow start (migrations, warm-up) is not
+          # mistaken for a hang and restarted in a loop.
+          startupProbe:
+            httpGet: { path: /health, port: 3000 }
+            periodSeconds: 2
+            failureThreshold: 30        # allow up to 60s to boot
+
+          # LIVENESS: "is this process alive?"
+          # Deliberately checks NOTHING external. If it checked Postgres, a
+          # database blip would restart every healthy game server and turn a
+          # small outage into a large one.
+          # Failing this RESTARTS the container.
+          livenessProbe:
+            httpGet: { path: /health, port: 3000 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # READINESS: "can this process serve traffic?"
+          # This one DOES check dependencies, because the right response to a
+          # broken dependency is to stop receiving traffic, not to be killed.
+          # Failing this removes the Pod from the Service's endpoints.
+          readinessProbe:
+            httpGet: { path: /ready, port: 3000 }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+            successThreshold: 1
