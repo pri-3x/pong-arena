@@ -9,7 +9,30 @@ was first observed breaking. The commit history and
 [learning log](docs/learning-log.md) follow that order, so you can read it as a
 course rather than a finished codebase.
 
-![MIT licensed](https://img.shields.io/badge/license-MIT-blue) ![Kubernetes](https://img.shields.io/badge/kubernetes-1.34-blue) ![Node](https://img.shields.io/badge/node-20-green)
+![MIT licensed](https://img.shields.io/badge/license-MIT-blue) ![Kubernetes](https://img.shields.io/badge/kubernetes-1.34-blue) ![Node](https://img.shields.io/badge/node-20-green) ![CI](https://github.com/pri-3x/pong-arena/actions/workflows/ci.yml/badge.svg)
+
+> ### New here? Read [**the tech guide**](docs/tech-guide.md).
+>
+> Every technology in this project explained in depth - Docker, Kubernetes,
+> Redis, PostgreSQL, WebSockets, Prometheus, Helm and the rest - with the
+> mental model for each, the real files that use it, the mistakes we hit
+> (with measurements), and something to run yourself.
+
+## What you will learn
+
+Not a list of buzzwords - these are the specific things this project makes you
+confront, each because something broke without it:
+
+- Why an app that works perfectly at **one replica** can be completely broken at
+  two, and what shared state actually fixes
+- The difference between **liveness and readiness**, and why getting it backwards
+  turns a database blip into a full outage
+- Why **CPU limits throttle** but **memory limits kill**
+- Why changing a ConfigMap **does not restart your Pods**, and what to do instead
+- What a Kubernetes **Secret does and does not protect you from** (it is base64,
+  not encryption)
+- How to make a **broken deploy a non-event** instead of an outage
+- How to tell a real measurement from a **test that passed for the wrong reason**
 
 ## Quick start
 
@@ -38,6 +61,17 @@ in `sessionStorage`, which is per-tab.)
 | Failure tests | `./scripts/chaos.sh` |
 | Remove everything | `./scripts/teardown.sh` |
 
+## What it looks like
+
+The game is deliberately plain - the interesting part is underneath it. Once
+running, three things are worth opening:
+
+| | |
+|---|---|
+| **The game** | two browser tabs at <http://localhost>, playing a real cross-Pod match |
+| **The dashboard** | <http://localhost/grafana> - players, matches, replicas, latency, queue depth |
+| **The cluster** | `kubectl get pods -w` while `./scripts/chaos.sh` breaks things |
+
 ## Learning path
 
 Each phase solved a problem the previous phase created. Read in this order:
@@ -57,6 +91,8 @@ Each phase solved a problem the previous phase created. Read in this order:
 | 16-17 | Chaos testing and safe rollouts | [Failure testing](docs/failure-testing.md) |
 | 18-19 | CI/CD and Helm | [CI workflow](.github/workflows/ci.yml) |
 | 20 | The whole system | [Architecture](docs/architecture.md) |
+
+Or look a technology up directly in the [tech guide](docs/tech-guide.md).
 
 Every non-obvious choice is recorded in
 [docs/decisions.md](docs/decisions.md) - 35 short architecture decision records,
@@ -216,6 +252,7 @@ MIT - see [LICENSE](LICENSE).
 
 ## Documentation
 
+- [**Tech guide**](docs/tech-guide.md) - every technology explained in depth
 - [Learning log](docs/learning-log.md) - what was built in each phase and why
 - [WebSocket protocol](docs/websocket-protocol.md)
 - [Redis keys and channels](docs/redis-keys.md)
