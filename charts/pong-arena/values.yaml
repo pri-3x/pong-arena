@@ -27,7 +27,7 @@ gameServer:
 web:
   image:
     repository: pong-web
-    tag: "v8"
+    tag: "v9"
     pullPolicy: IfNotPresent
   replicas: 1
   resources:

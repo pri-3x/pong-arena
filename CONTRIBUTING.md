@@ -73,6 +73,8 @@ node test/auth.test.mjs     http://localhost:3101
 node test/redis.test.mjs    http://localhost:3101 http://localhost:3102
 node test/history.test.mjs  http://localhost:3101 http://localhost:3102
 node test/abandon.test.mjs  http://localhost:3101 http://localhost:3102
+node test/guest-invite.test.mjs   http://localhost:3101 http://localhost:3102
+node test/heartbeat-race.test.mjs http://localhost:3101 http://localhost:3102
 ```
 
 Two processes are not optional for `redis.test.mjs`, `history.test.mjs` or

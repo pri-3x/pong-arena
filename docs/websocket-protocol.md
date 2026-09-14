@@ -22,6 +22,8 @@ a `t` (type) field.
 | `{"t":"join","name":"alice"}` | Enter matchmaking. Name is clamped to 20 chars server-side. |
 | `{"t":"input","dir":-1\|0\|1}` | Paddle direction: -1 up, 0 stop, 1 down. Anything else is treated as 0. |
 | `{"t":"ping","ts":123.4}` | Latency probe; `ts` is echoed back untouched. |
+| `{"t":"host","token":"..."}` | Create a private match; replies with a shareable code. |
+| `{"t":"join_code","token":"...","code":"9C3WSY"}` | Join a friend's private match. Case-insensitive. |
 
 ## Server → client
 
@@ -35,6 +37,8 @@ a `t` (type) field.
 | `{"t":"score","score":{...},"scored":"left"}` | A point was scored. |
 | `{"t":"end","winner","score","reason"}` | Match over. `reason` is `win` or `opponent_left`. |
 | `{"t":"pong","ts"}` | Reply to `ping`. |
+| `{"t":"invite","code":"9C3WSY"}` | Your private match code. Share it, or share `/?join=CODE`. |
+| `{"t":"invite_error","code","reason"}` | The code was invalid, already used, or your own. |
 | `{"t":"error","message"}` | Malformed or out-of-order request. |
 
 ## Sequence
@@ -57,6 +61,36 @@ client                                server
   |<------------ score -----------------|
   |<------------ end -------------------|
 ```
+
+## Private matches
+
+```
+host                          redis                         friend
+ |-- host ------------------->|                                |
+ |<-- invite {code} ----------|  SET invite:<code> NX EX 900   |
+ |                            |                                |
+ |        ...the code is shared out of band (link or chat)...  |
+ |                            |                                |
+ |                            |<------------- join_code {code} |
+ |                            |  GETDEL invite:<code>          |
+ |<-- matched ----------------|--------------- matched ------->|
+```
+
+`GETDEL` reads and deletes atomically, so if two people paste the same code at
+the same moment exactly one is let in. The invite is released if the host
+disconnects, and expires on its own after 15 minutes.
+
+The host always takes the left paddle.
+
+## Guests
+
+`POST /auth/guest` returns a normal signed token carrying `guest: true`, whose
+subject is a random id that is **not** a row in `users`. The WebSocket handshake
+needs no special case.
+
+Guest matches are deliberately never persisted: `Room.finish()` only reports a
+result when both players have a real `userId`, and `match_players` has a foreign
+key to `users` that would reject them anyway.
 
 ## Known limitation (fixed in Phase 5)
 

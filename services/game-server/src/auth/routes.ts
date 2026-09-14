@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { hashPassword, verifyPassword } from "./password.js";
-import { issueToken, verifyToken } from "./token.js";
+import { issueToken, issueGuestToken, verifyToken } from "./token.js";
 import { createUser, findByUsername, findById, USERNAME_RE } from "../db/users.js";
 
 interface Credentials { username?: unknown; password?: unknown }
@@ -58,9 +58,23 @@ export function registerAuthRoutes(app: FastifyInstance) {
     });
   });
 
+  /**
+   * Play without an account. Returns a signed token whose subject is NOT a
+   * row in `users`, so guest matches are deliberately never persisted - the
+   * foreign key from match_players to users would reject them anyway.
+   */
+  app.post("/auth/guest", async (_req, reply) => {
+    const { token, username, id } = await issueGuestToken();
+    return reply.code(201).send({ token, user: { id, username, guest: true } });
+  });
+
   app.get("/auth/me", async (req, reply) => {
     const claims = await verifyToken(bearer(req.headers.authorization));
     if (!claims) return reply.code(401).send({ error: "unauthorized" });
+    // A guest has no database row, so answer from the token itself.
+    if (claims.guest) {
+      return reply.send({ user: { id: claims.sub, username: claims.username, guest: true } });
+    }
     const user = await findById(claims.sub);
     if (!user) return reply.code(401).send({ error: "unauthorized" });
     return reply.send({ user });

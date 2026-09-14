@@ -27,7 +27,7 @@ spec:
       terminationGracePeriodSeconds: 40
       containers:
         - name: game-server
-          image: pong-game-server:v18
+          image: pong-game-server:v19
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -42,7 +42,7 @@ spec:
                 name: pong-secrets
           env:
             - name: APP_VERSION
-              value: "v18"
+              value: "v19"
             # The downward API: a fact about the Pod itself, not configuration,
             # so it stays here rather than in the ConfigMap.
             - name: POD_NAME

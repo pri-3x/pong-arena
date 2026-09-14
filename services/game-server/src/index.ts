@@ -169,7 +169,11 @@ app.get("/ws", { websocket: true }, (socket) => {
         void (async () => {
           const claims = await verifyToken(typeof msg.token === "string" ? msg.token : undefined);
           if (!claims) return send({ t: "unauthorized", message: "sign in to play" });
-          conn.userId = claims.sub;
+          conn.isGuest = claims.guest === true;
+          // identityId is who you ARE (guests included); userId is only set
+          // for real accounts, because it becomes a foreign key.
+          conn.identityId = claims.sub;
+          conn.userId = claims.guest ? null : claims.sub;
           conn.name = claims.username;
           try {
             await arena.join(conn);
@@ -180,6 +184,40 @@ app.get("/ws", { websocket: true }, (socket) => {
         })();
         break;
       }
+      // Private match: create a code to share with a friend.
+      case "host": {
+        void (async () => {
+          const claims = await verifyToken(typeof msg.token === "string" ? msg.token : undefined);
+          if (!claims) return send({ t: "unauthorized", message: "sign in or continue as a guest" });
+          conn.isGuest = claims.guest === true;
+          conn.identityId = claims.sub;
+          conn.userId = claims.guest ? null : claims.sub;
+          conn.name = claims.username;
+          await arena.host(conn).catch((e) => {
+            app.log.error({ err: e }, "host failed");
+            send({ t: "error", message: "could not create a match code" });
+          });
+        })();
+        break;
+      }
+
+      // Private match: join a friend's code.
+      case "join_code": {
+        void (async () => {
+          const claims = await verifyToken(typeof msg.token === "string" ? msg.token : undefined);
+          if (!claims) return send({ t: "unauthorized", message: "sign in or continue as a guest" });
+          conn.isGuest = claims.guest === true;
+          conn.identityId = claims.sub;
+          conn.userId = claims.guest ? null : claims.sub;
+          conn.name = claims.username;
+          await arena.joinByCode(conn, msg.code).catch((e) => {
+            app.log.error({ err: e }, "join_code failed");
+            send({ t: "error", message: "could not join that match" });
+          });
+        })();
+        break;
+      }
+
       case "input": {
         // The ONLY thing a client may influence: its own paddle direction.
         if (!conn.side) return;

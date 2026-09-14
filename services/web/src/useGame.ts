@@ -17,6 +17,8 @@ export function useGame() {
   const [names, setNames] = useState<Record<Side, string> | null>(null);
   const [result, setResult] = useState<{ winner: Side | null; reason: string } | null>(null);
   const [ping, setPing] = useState<number | null>(null);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   // Two most recent snapshots. We render BETWEEN them, which is what turns a
   // 30 Hz stream into smooth 60 fps motion. Kept in a ref, not state, because
@@ -35,13 +37,15 @@ export function useGame() {
       switch (m.t) {
         case "hello": setInstance(m.instance); break;
         case "waiting": setStatus("waiting"); break;
-        case "matched": setSide(m.side); setRoomId(m.roomId); break;
+        case "matched": setSide(m.side); setRoomId(m.roomId); setInviteCode(null); break;
         case "start": setNames(m.players); setStatus("playing"); setResult(null); break;
         case "state": {
           const s: Snapshot = { ball: m.b, paddles: m.p, score: m.s, at: performance.now() };
           snaps.current = { prev: snaps.current.curr, curr: s };
           break;
         }
+        case "invite": setInviteCode(m.code); setInviteError(null); setStatus("hosting"); break;
+        case "invite_error": setInviteError(m.reason); setStatus("idle"); break;
         case "unauthorized": setStatus("unauthorized"); break;
         case "end": {
           // The winning point ends the match instantly, so no further `state`
@@ -86,6 +90,20 @@ export function useGame() {
   // keeps applying the last direction until told otherwise, so a held key
   // costs one message, not sixty per second.
   const lastDir = useRef<-1 | 0 | 1>(0);
+  /** Create a private match and get a code to share. */
+  const host = useCallback((token: string) => {
+    setInviteError(null);
+    send({ t: "host", token });
+  }, [send]);
+
+  /** Join a friend's private match by code. */
+  const joinCode = useCallback((token: string, code: string) => {
+    setInviteError(null);
+    snaps.current = { prev: null, curr: null };
+    setResult(null);
+    send({ t: "join_code", token, code });
+  }, [send]);
+
   const setDir = useCallback((dir: -1 | 0 | 1) => {
     if (dir === lastDir.current) return;
     lastDir.current = dir;
@@ -95,8 +113,9 @@ export function useGame() {
   // Dev-only debug handle so the game state can be inspected from the console
   // (and by automated checks) without wiring it through React state.
   if (import.meta.env.DEV) {
-    (window as unknown as Record<string, unknown>).__pong = { status, side, roomId, result, snaps };
+    (window as unknown as Record<string, unknown>).__pong = { status, side, roomId, result, snaps, inviteCode, inviteError };
   }
 
-  return { status, side, instance, roomId, names, result, ping, snaps, join, setDir };
+  return { status, side, instance, roomId, names, result, ping, snaps,
+           inviteCode, inviteError, join, host, joinCode, setDir };
 }

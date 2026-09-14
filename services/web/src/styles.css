@@ -56,3 +56,25 @@ kbd {
 .stats .dim { color: #475569; }
 .stats .good { color: #4ade80; font-size: 11px; letter-spacing: .06em; }
 .stats .bad { color: #f87171; font-size: 11px; letter-spacing: .06em; }
+.actions { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.stack { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.invite { width: 100%; max-width: 420px; }
+.joinrow { display: flex; gap: 8px; }
+.joinrow input { flex: 0 0 150px; text-transform: uppercase; letter-spacing: .12em; }
+.codebox { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.code {
+  font-family: ui-monospace, monospace; font-size: 22px; font-weight: 600;
+  letter-spacing: .22em; color: #38bdf8; background: #0b0f14;
+  border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;
+  user-select: all;   /* one click selects the whole code */
+}
+.or { display: flex; align-items: center; gap: 10px; color: #475569; font-size: 12px; }
+.or::before, .or::after { content: ""; height: 1px; background: #1e293b; flex: 1; }
+button.ghost { background: transparent; color: #e2e8f0; border: 1px solid #334155; }
+button.ghost:hover { background: #0f1a24; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.tag {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  border: 1px solid #334155; border-radius: 999px; padding: 1px 6px;
+  color: #64748b; margin-left: 6px;
+}

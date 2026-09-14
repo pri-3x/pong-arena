@@ -25,6 +25,8 @@ confront, each because something broke without it:
 
 - Why an app that works perfectly at **one replica** can be completely broken at
   two, and what shared state actually fixes
+- How to make two specific people meet across replicas (**private match codes**,
+  claimed atomically with `GETDEL`)
 - The difference between **liveness and readiness**, and why getting it backwards
   turns a database blip into a full outage
 - Why **CPU limits throttle** but **memory limits kill**
@@ -50,9 +52,16 @@ That builds both images, installs ingress-nginx and metrics-server, generates
 secrets, deploys everything including Prometheus and Grafana, and waits until
 the app answers. It takes a few minutes the first time and is safe to re-run.
 
-Then open **<http://localhost>** in **two** browser tabs, create an account in
-each, and click "Find a match" in both. (Two tabs work because the token is kept
-in `sessionStorage`, which is per-tab.)
+Then open **<http://localhost>**. Three ways to play:
+
+- **Play as a guest** - one click, no account. Guest matches are not saved to
+  history or the leaderboard.
+- **Find a match** - public matchmaking against whoever is queued.
+- **Create a private match** - get a short code and a link (`/?join=CODE`) to
+  send a friend. Whoever opens it is matched directly with you.
+
+To try it solo, open two browser tabs. That works because the token is kept in
+`sessionStorage`, which is per-tab.
 
 | | |
 |---|---|
@@ -227,6 +236,7 @@ version, and they are what the earlier phases teach against.
 
 | Method | Path       | Response                                              |
 |--------|------------|-------------------------------------------------------|
+| POST   | `/auth/guest`    | no body -> `{token, user}` for a throwaway guest identity |
 | POST   | `/auth/register` | `{username, password}` -> `{token, user}`; 409 if taken |
 | POST   | `/auth/login`    | `{username, password}` -> `{token, user}`; 401 otherwise |
 | GET    | `/auth/me`       | requires `Authorization: Bearer <token>` |

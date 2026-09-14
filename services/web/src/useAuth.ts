@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export interface User { id: string; username: string; created_at: string }
+export interface User { id: string; username: string; created_at?: string; guest?: boolean }
 
 const KEY = "pong.token";
 
@@ -63,10 +63,29 @@ export function useAuth() {
     }
   }, []);
 
+  /** Play without an account. The token is signed exactly like a real one. */
+  const continueAsGuest = useCallback(async () => {
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch("/auth/guest", { method: "POST" });
+      if (!r.ok) { setError("could not start a guest session"); return false; }
+      const body = await r.json();
+      store.setItem(KEY, body.token);
+      setToken(body.token);
+      setUser(body.user);
+      return true;
+    } catch {
+      setError("cannot reach the server");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const logout = useCallback(() => {
     store.removeItem(KEY);
     setToken(null); setUser(null);
   }, []);
 
-  return { token, user, error, busy, ready, submit, logout };
+  return { token, user, error, busy, ready, submit, continueAsGuest, logout };
 }

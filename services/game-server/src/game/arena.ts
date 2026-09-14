@@ -5,18 +5,36 @@ import { redis, type RedisWithMatch } from "../redis/client.js";
 import { recordMatch } from "../db/matches.js";
 import { matchesCompleted, matchDuration } from "../metrics.js";
 import { startHeartbeat, clearBeat, beat } from "../redis/heartbeat.js";
+import { createInvite, claimInvite, cancelInvite } from "../redis/invites.js";
 import { POD_ID, sendToPlayer, sendInputToRoom, sendLeaveToRoom, type ToPlayer, type ToRoom } from "../redis/bus.js";
 
 const QUEUE_KEY = "mm:queue";
 
 /** A player waiting in the shared queue. Serialised into Redis as JSON. */
-interface Ticket { playerId: string; userId: string; name: string; pod: string }
+interface Ticket {
+  playerId: string;
+  /** Real database user id, or "" for a guest. Used only for persistence. */
+  userId: string;
+  /** Who this player IS, guest or not. Used to prevent self-matching. */
+  identityId: string;
+  name: string;
+  pod: string;
+}
 
 /** Everything we track about one locally-connected client. */
 export interface Conn {
   playerId: string;
-  /** The authenticated user this socket belongs to. Set on `join`. */
+  /** Real database user id, or null for a guest. Guest matches are not stored. */
   userId: string | null;
+  /**
+   * Stable identity for this socket, guest or not. A guest gets a random id
+   * from their token, so two tabs of the SAME guest still cannot be paired -
+   * while two DIFFERENT guests can.
+   */
+  identityId: string | null;
+  isGuest: boolean;
+  /** An invite code this connection created and is currently hosting. */
+  inviteCode: string | null;
   name: string;
   send: (m: unknown) => void;
   /** Set when the simulation for this player's match runs on THIS pod. */
@@ -91,7 +109,8 @@ export class Arena {
 
   newConn(name: string, send: (m: unknown) => void): Conn {
     const conn: Conn = {
-      playerId: randomUUID(), userId: null, name, send,
+      playerId: randomUUID(), userId: null, identityId: null, isGuest: false,
+      inviteCode: null, name, send,
       room: null, remote: null, side: null, ticket: null,
     };
     this.local.set(conn.playerId, conn);
@@ -103,9 +122,7 @@ export class Arena {
   }
 
   async join(conn: Conn): Promise<void> {
-    const ticket: Ticket = {
-      playerId: conn.playerId, userId: conn.userId ?? "", name: conn.name, pod: POD_ID,
-    };
+    const ticket = this.ticketFor(conn);
     const raw = JSON.stringify(ticket);
 
     // One atomic Redis call: either we get an opponent, or we are queued.
@@ -122,14 +139,25 @@ export class Arena {
     // Two tabs signed into the SAME account must not be matched together:
     // match_players is keyed on (match_id, user_id), so recording that match
     // in Phase 7 would violate the primary key. Put them both back and wait.
-    if (opponent.userId && opponent.userId === conn.userId) {
+    if (opponent.identityId && opponent.identityId === conn.identityId) {
       await redis.lpush(QUEUE_KEY, opponentRaw, raw);
       conn.ticket = raw;
       conn.send({ t: "waiting", playerId: conn.playerId, reason: "cannot play yourself" });
       return;
     }
 
-    // Whoever completes the match OWNS the room and runs the simulation.
+    await this.startRoom(opponent, ticket);
+  }
+
+  /**
+   * Create a room for two tickets and start the match. `host` takes the left
+   * paddle. Whichever Pod runs this OWNS the room and runs the simulation; the
+   * other becomes a relay.
+   *
+   * Shared by public matchmaking and by private invites, so both paths get the
+   * heartbeat, the metrics and the persistence hook identically.
+   */
+  private async startRoom(host: Ticket, joiner: Ticket): Promise<void> {
     const room = new Room(
       randomUUID().slice(0, 8),
       (r) => this.rooms.delete(r.id),
@@ -144,10 +172,18 @@ export class Arena {
     );
     this.rooms.set(room.id, room);
 
-    // The player who waited gets the left paddle.
+    // Write the first heartbeat BEFORE anyone is told this room exists.
+    //
+    // The heartbeat interval only fires every 2s, so a room created just after
+    // a tick would have no `alive` key for up to two seconds - and another
+    // Pod's orphan sweep, running on its own 2s timer, can look during that
+    // window, find nothing, and end a brand new match with "server_lost".
+    await beat(room.id, Date.now());
+
+    // The player who waited (or who created the invite) gets the left paddle.
     const sides: Array<{ ticket: Ticket; side: Side }> = [
-      { ticket: opponent, side: "left" },
-      { ticket, side: "right" },
+      { ticket: host, side: "left" },
+      { ticket: joiner, side: "right" },
     ];
 
     for (const { ticket: t, side } of sides) {
@@ -167,6 +203,60 @@ export class Arena {
     }
   }
 
+  private ticketFor(conn: Conn): Ticket {
+    return {
+      playerId: conn.playerId,
+      userId: conn.userId ?? "",
+      identityId: conn.identityId ?? conn.playerId,
+      name: conn.name,
+      pod: POD_ID,
+    };
+  }
+
+  /**
+   * Host a private match. Returns a short code to share; the friend who enters
+   * it is paired directly with this player, skipping the public queue.
+   */
+  async host(conn: Conn): Promise<void> {
+    if (conn.room || conn.remote) return conn.send({ t: "error", message: "already in a game" });
+    if (conn.inviteCode) return conn.send({ t: "invite", code: conn.inviteCode });
+
+    const code = await createInvite(this.ticketFor(conn));
+    if (!code) return conn.send({ t: "error", message: "could not create an invite, try again" });
+
+    conn.inviteCode = code;
+    conn.send({ t: "invite", code });
+  }
+
+  /** Join a private match by code. */
+  async joinByCode(conn: Conn, rawCode: unknown): Promise<void> {
+    if (conn.room || conn.remote) return conn.send({ t: "error", message: "already in a game" });
+
+    const code = String(rawCode ?? "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,12}$/.test(code)) {
+      return conn.send({ t: "invite_error", code, reason: "that does not look like a match code" });
+    }
+
+    // GETDEL: reading and deleting in one operation means two people pasting
+    // the same code at the same moment cannot both be let in.
+    const host = await claimInvite(code);
+    if (!host) {
+      return conn.send({ t: "invite_error", code, reason: "that match code is not valid any more" });
+    }
+    if (host.identityId && host.identityId === conn.identityId) {
+      // Put it back - they pasted their own code.
+      await createInvite(host).catch(() => {});
+      return conn.send({ t: "invite_error", code, reason: "that is your own match code" });
+    }
+
+    // The host has been claimed out of Redis, so clear their local flag too if
+    // they happen to be on this Pod.
+    const hostConn = host.pod === POD_ID ? this.local.get(host.playerId) : undefined;
+    if (hostConn) hostConn.inviteCode = null;
+
+    await this.startRoom(host, this.ticketFor(conn));
+  }
+
   /** A paddle input arrived from a local socket. */
   input(conn: Conn, dir: -1 | 0 | 1) {
     if (conn.room && conn.side) {
@@ -183,6 +273,8 @@ export class Arena {
   async leave(conn: Conn) {
     this.local.delete(conn.playerId);
     if (conn.ticket) await redis.lrem(QUEUE_KEY, 1, conn.ticket);
+    // Do not leave a dead invite code lying around for someone to join into.
+    if (conn.inviteCode) { await cancelInvite(conn.inviteCode); conn.inviteCode = null; }
     if (conn.room && conn.side) conn.room.remove(conn.side);
     else if (conn.remote && conn.side) sendLeaveToRoom(conn.remote.ownerPod, conn.remote.roomId, conn.side);
     conn.room = null;

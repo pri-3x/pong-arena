@@ -332,3 +332,38 @@ as Helm prefixed Service names with the release name
 has exactly one global name breaks the moment two copies exist.
 **Detail:** `NGINX_ENVSUBST_FILTER=GAME_SERVER_HOST` restricts substitution so
 nginx's own `$uri`, `$host` and `$http_upgrade` are not clobbered.
+
+## ADR-036: guests get a signed token, not a database row
+**Decision:** `POST /auth/guest` issues a normal HS256 token carrying
+`guest: true`, whose subject is a random `guest_<uuid>` that does not exist in
+`users`.
+**Why:** the WebSocket handshake then needs no special case - it verifies a
+token exactly as before. And guest matches are excluded from persistence for
+free: `Room.finish()` already required both players to have a real `userId`,
+and `match_players` has a foreign key to `users` that would reject them anyway.
+**Consequence:** `Conn` now carries both `userId` (nullable, for persistence)
+and `identityId` (always set, for the self-match guard). Without that split,
+every guest would have had an empty user id and two *different* guests would
+have looked like the same person.
+
+## ADR-037: private matches as an atomically claimed Redis key
+**Decision:** hosting writes `invite:<code>` with `SET ... NX EX 900`; joining
+uses `GETDEL`.
+**Why:** the host and the joining friend are usually on different Pods, so the
+invite cannot live in process memory - the same reason the matchmaking queue
+moved to Redis. `NX` means two simultaneous creations can never be handed the
+same code; `GETDEL` reads and deletes in one operation, so if two people paste
+the same code at the same moment exactly one is let in.
+**Detail:** the alphabet omits `0 O 1 I L`. Codes are read aloud and typed from
+phone screens, where ambiguous glyphs cost more than the extra entropy is worth.
+**Sharing:** the UI offers both the code and a `/?join=CODE` link, because a
+link is far easier to send than six characters. The client consumes the query
+parameter once and strips it, so a refresh does not retry a spent code.
+
+## ADR-038: public matchmaking and invites share one startRoom()
+**Decision:** extract room creation into a private `startRoom(host, joiner)`
+used by both paths.
+**Why:** the heartbeat, the metrics, the persistence hook and the local/remote
+`send` wiring are all subtle and all easy to get half-right. Duplicating them
+for invites would have meant a second place to forget the first heartbeat -
+which is exactly the bug that had already shipped once.

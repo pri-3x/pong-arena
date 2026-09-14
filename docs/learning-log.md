@@ -1321,3 +1321,92 @@ Same rule as Phase 9: Kubernetes will not delete your data to tidy up.
 
 The raw manifests in `k8s/` are kept deliberately - they are the readable
 version, and they are what the earlier phases teach against.
+
+## Guest play and private match codes
+
+Two features, added after the 20 phases: play without an account, and share a
+code with a friend to play them directly.
+
+### Guests, without a second code path
+
+A guest gets a **normal signed token** with `guest: true`, whose subject is a
+random `guest_<uuid>`. The WebSocket handshake needs no special case - it
+verifies a token exactly as before.
+
+The interesting constraint is the database. `match_players` has a foreign key to
+`users`, so a guest match cannot be recorded. That turned out to need no new
+code: `Room.finish()` already refused to report a result unless both players had
+a real `userId`. Guest matches are excluded from history and the leaderboard for
+free.
+
+But one thing did need splitting. `Conn` now carries two identities:
+
+```ts
+userId: string | null      // real account, nullable. Becomes a foreign key.
+identityId: string | null  // who you ARE, guests included. Stops self-matching.
+```
+
+Without that split, every guest would have had an empty `userId`, and the
+self-match guard (`opponent.userId === conn.userId`) would have treated **two
+different guests as the same person** - so no two guests could ever have played
+each other.
+
+### Invites: one Redis key, claimed atomically
+
+```
+SET invite:<code> <host ticket> EX 900 NX     # NX: two creations cannot collide
+GETDEL invite:<code>                           # atomic claim: exactly one winner
+```
+
+`GETDEL` is the whole concurrency story. Without it, two people pasting the same
+code would both read it as valid and both try to start a match.
+
+The invite lives in Redis for the same reason the matchmaking queue does: the
+host and the friend are usually on different Pods, and the host's Pod is not the
+one that receives the join.
+
+Codes avoid `0 O 1 I L`. They get read aloud and typed from phone screens.
+
+The UI offers a code **and** a `/?join=CODE` link, because a link is much easier
+to send. The client consumes the parameter once and strips it from the URL, so a
+refresh does not retry a spent code.
+
+### Refactor first, then add
+
+Both paths now call one private `startRoom(host, joiner)`. The heartbeat, the
+metrics, the persistence hook and the local/remote `send` wiring are all subtle;
+duplicating them for invites would have created a second place to forget the
+first heartbeat - which is precisely the bug described below.
+
+### A bug found while adding a feature: the fix that never landed
+
+Phase 18 claimed to fix a heartbeat startup race. **It did not.** The edit
+targeted a code string that a refactor had already changed, so the replacement
+silently did nothing - the import was added, the call never was. The commit
+message said it was fixed. It was not.
+
+The suite still went green, because the *other* fix in that commit (clearing
+`conn.remote` on `end`) resolved the failures being investigated at the time.
+
+The race is **phase-dependent**, which is why it hid for three phases: the
+owner's heartbeat interval and the sweeper's interval both run every 2s, and
+when both processes start together the timers align so the sweep lands just
+after the beat. Matches created at varied offsets hit the gap.
+
+A targeted regression test - many matches started at staggered times - made it
+obvious immediately:
+
+```
+WITHOUT the fix:   matches started: 10/10    falsely orphaned: 9
+WITH the fix:      matches started: 10/10    falsely orphaned: 0
+```
+
+**Nine out of ten cross-Pod matches were being killed seconds after starting.**
+
+Two lessons, both already themes of this project:
+
+1. **Verify the edit, not just the test.** A string replacement that matches
+   nothing fails silently. `grep` for the change afterwards.
+2. **A regression test must be shown to fail.** This one was run against a build
+   with the fix removed before being trusted. A regression test that has never
+   been red is an assumption wearing a test's clothes.

@@ -10,7 +10,11 @@ export type ServerMsg =
   | { t: "score"; score: Record<Side, number>; scored: Side }
   | { t: "end"; winner: Side | null; score?: Record<Side, number>; reason: string; message?: string }
   | { t: "pong"; ts: number }
+  | { t: "invite"; code: string }
+  | { t: "invite_error"; code: string; reason: string }
   | { t: "unauthorized"; message: string }
   | { t: "error"; message: string };
 
-export type Status = "connecting" | "idle" | "waiting" | "playing" | "finished" | "disconnected" | "unauthorized";
+export type Status =
+  | "connecting" | "idle" | "waiting" | "hosting"
+  | "playing" | "finished" | "disconnected" | "unauthorized";

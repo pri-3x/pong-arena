@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/authpanel.tsx","./src/field.tsx","./src/stats.tsx","./src/main.tsx","./src/protocol.ts","./src/useauth.ts","./src/usegame.ts","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/authpanel.tsx","./src/field.tsx","./src/invitepanel.tsx","./src/stats.tsx","./src/main.tsx","./src/protocol.ts","./src/useauth.ts","./src/usegame.ts","./src/vite-env.d.ts"],"version":"5.9.3"}

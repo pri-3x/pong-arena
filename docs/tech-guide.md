@@ -1008,6 +1008,27 @@ A Redis connection that has run `SUBSCRIBE` enters subscriber mode and may not
 issue ordinary commands. So: one for commands, one for publishing, one for
 subscribing. See [`src/redis/client.ts`](../services/game-server/src/redis/client.ts).
 
+### Private matches: invites as a Redis key
+
+Public matchmaking pairs strangers; an invite pairs two specific people. Both
+end up calling the same `startRoom()`, so both get the heartbeat, the metrics
+and the persistence hook identically.
+
+The invite lives in Redis for the same reason the queue does - the host and the
+friend will usually be on different Pods, and the host's Pod is not the one that
+receives the join.
+
+```
+SET invite:<code> <host ticket> EX 900 NX      # NX: two creations cannot collide
+GETDEL invite:<code>                            # atomic claim: exactly one winner
+```
+
+`GETDEL` is the whole concurrency story. Without it, two people pasting the same
+code would both read it as valid and both try to start a match.
+
+The code alphabet omits `0 O 1 I L` - codes get read aloud and typed from a
+phone screen, and ambiguous glyphs cost more than the extra entropy is worth.
+
 ### What bit us
 
 **Redis fixed pairing but not play.** After the shared queue landed, players on
@@ -1026,6 +1047,17 @@ never cleared its room reference. Two seconds later its sweep found the missing
 key and sent a *second* `end` with `reason: "server_lost"`, overwriting the real
 result. Winners were reported as `null`. **Found by CI, not by the manual chaos
 test** - because the manual test only exercised the failure path.
+
+**A heartbeat startup race that shipped for three phases.** The `alive` key is
+refreshed by a 2s interval, so a room created just after a tick had no key for
+up to two seconds - and the relaying Pod's sweep, on its own 2s timer, could
+look in that window and kill a brand new match with `server_lost`.
+
+It survived because it is *phase-dependent*: when both processes start together
+their timers align and the sweep lands just after the beat. A targeted
+regression test that creates matches at varied offsets exposed it immediately -
+**9 of 10 matches falsely killed.** The fix is one line: write the first beat
+before anyone is told the room exists.
 
 **`SCAN`, never `KEYS`.** `KEYS` walks the whole keyspace in one blocking
 operation and stalls every other client.

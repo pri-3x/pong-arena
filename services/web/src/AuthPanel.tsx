@@ -27,6 +27,16 @@ export function AuthPanel({ auth }: { auth: ReturnType<typeof useAuth> }) {
       <button type="submit" disabled={auth.busy}>
         {auth.busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
       </button>
+
+      <div className="or"><span>or</span></div>
+      <button type="button" className="ghost" disabled={auth.busy}
+              onClick={() => void auth.continueAsGuest()}>
+        Play as a guest
+      </button>
+      <p className="hint">
+        No account needed. Guest matches are not saved to your history or the
+        leaderboard.
+      </p>
       {auth.error && <p className="bad">{auth.error}</p>}
       {mode === "register" && !auth.error && (
         <p className="hint">3-20 characters, letters/numbers/underscore. Password at least 8 characters.</p>
