@@ -410,3 +410,25 @@ with only docker and kubectl. `scripts/enable-custom-metrics.sh` adds it.
 **Why:** the built-in rules expose CPU and memory, which metrics-server already
 serves on the resource metrics API. Two sources for the same numbers is a good
 way to confuse yourself when an HPA behaves unexpectedly.
+
+## ADR-043: drain in place rather than migrate matches
+**Decision:** on SIGTERM, stop accepting new matches, wait up to
+`DRAIN_TIMEOUT_MS` for in-flight matches to finish, then end anything left with
+`reason: "server_draining"` - still writing the result.
+**Why:** migrating a live 60 Hz simulation plus two WebSocket connections to
+another Pod is a substantially harder problem, and matches are short (tens of
+seconds). Waiting is simpler and covers almost every real case.
+**Measured:** a Pod with three matches stayed alive 25.6 s and finished all of
+them. During a full rolling restart under load, terminating Pods persisted ~50 s
+and the active-game count kept rising throughout.
+**Budget:** `terminationGracePeriodSeconds: 100` must cover preStop (8s) +
+drain (60s) + write flush (5s) + margin. Getting this wrong fails silently - the
+Pod is SIGKILLed mid-drain, which is what draining existed to prevent.
+
+## ADR-044: the Arena tracks pending result writes
+**Decision:** `recordMatch()` promises are held in a set and awaited during
+shutdown.
+**Why:** fire-and-forget is fine during normal play, but at shutdown the process
+closed the connection pool and exited while the INSERT was still in flight, and
+a match that was genuinely played vanished. Found by the drain-deadline test,
+which saw the players correctly told the match had ended and then found no row.

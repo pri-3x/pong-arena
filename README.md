@@ -34,6 +34,8 @@ confront, each because something broke without it:
 - What a Kubernetes **Secret does and does not protect you from** (it is base64,
   not encryption)
 - How to make a **broken deploy a non-event** instead of an outage
+- How to **drain long-lived connections** on shutdown so a rolling update does
+  not kill the games people are playing
 - How to tell a real measurement from a **test that passed for the wrong reason**
 
 ## Quick start
@@ -271,6 +273,7 @@ MIT - see [LICENSE](LICENSE).
 - [Configuration and secrets](docs/configuration.md)
 - [Persistent storage](docs/storage.md)
 - [Custom-metric autoscaling](docs/custom-metrics.md)
+- [Graceful shutdown](docs/graceful-shutdown.md)
 - [Architecture](docs/architecture.md)
 - [Observability](docs/observability.md)
 - [Load testing results](docs/load-testing.md)

@@ -16,7 +16,9 @@ gameServer:
   # preStop keeps the Pod serving while its Service endpoint removal
   # propagates. See ADR-030.
   preStopSleepSeconds: 8
-  terminationGracePeriodSeconds: 40
+  # Must cover preStop + drainTimeout + the result flush, with margin.
+  terminationGracePeriodSeconds: 100
+  drainTimeoutMs: 60000
   allowChaos: false      # gates POST /debug/unready; never enable in production
   autoscaling:
     enabled: true
@@ -27,7 +29,7 @@ gameServer:
 web:
   image:
     repository: pong-web
-    tag: "v9"
+    tag: "v10"
     pullPolicy: IfNotPresent
   replicas: 1
   resources:
@@ -63,6 +65,7 @@ config:
   POSTGRES_DB: pong
   POSTGRES_POOL_MAX: "10"
   JWT_TTL: 24h
+  DRAIN_TIMEOUT_MS: "60000"
 
 # Secrets are NOT templated. The chart references an existing Secret created out
 # of band by scripts/create-secrets.sh, so no credential can ever end up in a

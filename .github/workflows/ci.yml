@@ -61,7 +61,11 @@ jobs:
           JWT_SECRET: ci-only-secret
         run: |
           POD_NAME=pod-A PORT=3101 node dist/index.js > /tmp/a.log 2>&1 &
+          PID_A=$!
           POD_NAME=pod-B PORT=3102 node dist/index.js > /tmp/b.log 2>&1 &
+          PID_B=$!
+          # The drain tests need to SIGTERM one specific instance.
+          echo "$PID_A $PID_B" > /tmp/pids
           for i in $(seq 1 40); do
             curl -sf localhost:3101/ready >/dev/null 2>&1 && \
             curl -sf localhost:3102/ready >/dev/null 2>&1 && break
@@ -99,6 +103,13 @@ jobs:
       - name: Heartbeat startup race (regression)
         working-directory: services/game-server
         run: ROUNDS=8 node test/heartbeat-race.test.mjs http://localhost:3101 http://localhost:3102
+
+      # Draining is tested LAST: it terminates the running instances, so
+      # nothing after it would have a server to talk to.
+      - name: Graceful draining - a match survives its server being terminated
+        working-directory: services/game-server
+        env: { OWNER_PIDFILE: /tmp/pids }
+        run: node test/drain.test.mjs http://localhost:3101 http://localhost:3102
 
       - name: Build and typecheck web
         working-directory: services/web

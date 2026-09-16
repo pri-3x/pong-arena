@@ -41,8 +41,9 @@ dependency, clock skew.
   ingress port mapping)
 - Replace the CPU-based HPA with a custom-metric one via Prometheus Adapter or
   KEDA — the metrics are already exported (see ADR-024)
-- Add graceful match draining on Pod shutdown (see the limitations in
-  [docs/architecture.md](docs/architecture.md))
+- Explore match *migration* - draining finishes matches in place, but moving a
+  live simulation to another Pod is unsolved (see
+  [docs/graceful-shutdown.md](docs/graceful-shutdown.md))
 
 ## Running it
 
@@ -75,6 +76,10 @@ node test/history.test.mjs  http://localhost:3101 http://localhost:3102
 node test/abandon.test.mjs  http://localhost:3101 http://localhost:3102
 node test/guest-invite.test.mjs   http://localhost:3101 http://localhost:3102
 node test/heartbeat-race.test.mjs http://localhost:3101 http://localhost:3102
+
+# draining needs the server PIDs, and terminates them - run it last
+echo "$PID_A $PID_B" > /tmp/pids
+OWNER_PIDFILE=/tmp/pids node test/drain.test.mjs http://localhost:3101 http://localhost:3102
 ```
 
 Two processes are not optional for `redis.test.mjs`, `history.test.mjs` or

@@ -23,11 +23,19 @@ spec:
         prometheus.io/port: "3000"
         prometheus.io/path: "/metrics"
     spec:
-      # preStop sleeps 8s, then the app needs time to close sockets cleanly.
-      terminationGracePeriodSeconds: 40
+      # This budget must cover the WHOLE termination sequence, because
+      # Kubernetes SIGKILLs at the deadline regardless of what is happening:
+      #
+      #   preStop sleep         8s   endpoint removal propagates
+      #   drain (DRAIN_TIMEOUT) 60s  wait for in-flight matches to finish
+      #   flush result writes    5s
+      #   margin                27s
+      #                        ----
+      #                        100s
+      terminationGracePeriodSeconds: 100
       containers:
         - name: game-server
-          image: pong-game-server:v19
+          image: pong-game-server:v20
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -42,7 +50,7 @@ spec:
                 name: pong-secrets
           env:
             - name: APP_VERSION
-              value: "v19"
+              value: "v20"
             # The downward API: a fact about the Pod itself, not configuration,
             # so it stays here rather than in the ConfigMap.
             - name: POD_NAME

@@ -103,8 +103,11 @@ requeue. A user account cannot.
   recovery. Production would use a managed database or an operator.
 - `local-path` storage pins the volume to one node; it survives the Pod, not the
   node.
-- A terminating Pod still drops the WebSocket connections it holds. The
-  surviving player is now told (`server_lost`), but matches are not drained
-  gracefully across a rollout.
+- Matches are **drained**, not migrated: a terminating Pod finishes its
+  in-flight matches (measured: 25.6 s for three matches) and ends anything left
+  at the deadline with `server_draining`. Moving live simulation state to
+  another Pod is a much larger problem and is not attempted.
+- A Pod that is SIGKILLed or whose node vanishes cannot drain. That case is
+  covered by the room heartbeat, which tells the surviving player `server_lost`.
 - CPU is a proxy metric for autoscaling. `active_games` would be the honest
   signal; see ADR-024.

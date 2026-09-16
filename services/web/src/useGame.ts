@@ -19,6 +19,7 @@ export function useGame() {
   const [ping, setPing] = useState<number | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Two most recent snapshots. We render BETWEEN them, which is what turns a
   // 30 Hz stream into smooth 60 fps motion. Kept in a ref, not state, because
@@ -46,6 +47,13 @@ export function useGame() {
         }
         case "invite": setInviteCode(m.code); setInviteError(null); setStatus("hosting"); break;
         case "invite_error": setInviteError(m.reason); setStatus("idle"); break;
+        // This server is shutting down. Reconnecting lands us on a healthy
+        // pod, because the draining one has already left the Service.
+        case "draining":
+        case "requeue":
+          setNotice(m.t === "draining" ? m.message : m.reason);
+          setStatus("idle");
+          break;
         case "unauthorized": setStatus("unauthorized"); break;
         case "end": {
           // The winning point ends the match instantly, so no further `state`
@@ -81,6 +89,7 @@ export function useGame() {
   // We send the signed token, never a username. The server derives identity
   // from the signature, so a client cannot claim to be someone else.
   const join = useCallback((token: string) => {
+    setNotice(null);
     snaps.current = { prev: null, curr: null };
     setResult(null);
     send({ t: "join", token });
@@ -117,5 +126,5 @@ export function useGame() {
   }
 
   return { status, side, instance, roomId, names, result, ping, snaps,
-           inviteCode, inviteError, join, host, joinCode, setDir };
+           inviteCode, inviteError, notice, join, host, joinCode, setDir };
 }

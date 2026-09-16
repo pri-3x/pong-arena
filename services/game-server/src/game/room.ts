@@ -6,7 +6,7 @@ export interface MatchResult {
   roomId: string;
   startedAt: Date;
   endedAt: Date;
-  endReason: "win" | "opponent_left";
+  endReason: "win" | "opponent_left" | "server_draining";
   winnerUserId: string | null;
   players: Array<{ userId: string; side: Side; score: number; won: boolean }>;
 }
@@ -119,7 +119,7 @@ export class Room {
    * persisted once. `finished` guards against a double call, which would
    * otherwise insert the same match twice.
    */
-  private finish(reason: "win" | "opponent_left", winner: Side | null) {
+  private finish(reason: "win" | "opponent_left" | "server_draining", winner: Side | null) {
     if (this.finished) return;
     this.finished = true;
 
@@ -151,6 +151,19 @@ export class Room {
         won: winner === side,
       })),
     });
+  }
+
+  /**
+   * The Pod running this match is shutting down and the drain window expired.
+   *
+   * We finish through the normal path so the result is still written to
+   * PostgreSQL - a match that was genuinely played should not vanish because a
+   * Pod was rescheduled. Whoever is ahead wins; a draw awards nobody.
+   */
+  abandonForShutdown() {
+    const { left, right } = this.state.score;
+    const winner: Side | null = left === right ? null : left > right ? "left" : "right";
+    this.finish("server_draining", winner);
   }
 
   stop() {

@@ -6,4 +6,4 @@ type: application
 # They move independently: changing a template bumps version, shipping new
 # application code bumps appVersion.
 version: 0.1.0
-appVersion: "v19"
+appVersion: "v20"

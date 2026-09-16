@@ -12,6 +12,8 @@ export type ServerMsg =
   | { t: "pong"; ts: number }
   | { t: "invite"; code: string }
   | { t: "invite_error"; code: string; reason: string }
+  | { t: "draining"; message: string }
+  | { t: "requeue"; reason: string }
   | { t: "unauthorized"; message: string }
   | { t: "error"; message: string };
 

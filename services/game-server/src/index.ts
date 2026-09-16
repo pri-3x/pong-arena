@@ -9,6 +9,7 @@ import { migrate, dbHealthy, pool } from "./db/index.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { recentMatches, matchesForUser, leaderboard } from "./db/matches.js";
 import * as metrics from "./metrics.js";
+import { drain, isDraining } from "./drain.js";
 import { verifyToken } from "./auth/token.js";
 import * as C from "./game/constants.js";
 
@@ -74,6 +75,11 @@ app.get("/health", async () => ({ status: "ok" }));
 let forceUnready = false;
 
 app.get("/ready", async (_req, reply) => {
+  // A draining Pod is alive but must stop receiving traffic. Reporting this
+  // through readiness is what removes it from the Service endpoints.
+  if (isDraining()) {
+    return reply.code(503).send({ ok: false, reason: "draining" });
+  }
   if (forceUnready) {
     return reply.code(503).send({ ok: false, reason: "manually marked unready" });
   }
@@ -105,6 +111,8 @@ app.get("/cluster", async () => await clusterPresence());
 
 app.get("/stats", async () => ({
   instance: os.hostname(),
+  draining: isDraining(),
+  playersInMatches: arena.playersInMatches(),
   ...arena.stats,
   connections: connections.size,
   redis: { host: redisHost, status: redis.status, queueLength: await arena.queueLength().catch(() => -1) },
@@ -163,6 +171,7 @@ app.get("/ws", { websocket: true }, (socket) => {
 
     switch (msg.t) {
       case "join": {
+        if (isDraining()) return send({ t: "draining", message: "this server is shutting down - reconnect to be matched elsewhere" });
         if (conn.room || conn.remote) return send({ t: "error", message: "already in a game" });
         // Identity comes from the signed token, never from the client's claim
         // about who it is. This is why the `name` field is gone.
@@ -186,6 +195,7 @@ app.get("/ws", { websocket: true }, (socket) => {
       }
       // Private match: create a code to share with a friend.
       case "host": {
+        if (isDraining()) return send({ t: "draining", message: "this server is shutting down - reconnect to host elsewhere" });
         void (async () => {
           const claims = await verifyToken(typeof msg.token === "string" ? msg.token : undefined);
           if (!claims) return send({ t: "unauthorized", message: "sign in or continue as a guest" });
@@ -203,6 +213,7 @@ app.get("/ws", { websocket: true }, (socket) => {
 
       // Private match: join a friend's code.
       case "join_code": {
+        if (isDraining()) return send({ t: "draining", message: "this server is shutting down - reconnect to join elsewhere" });
         void (async () => {
           const claims = await verifyToken(typeof msg.token === "string" ? msg.token : undefined);
           if (!claims) return send({ t: "unauthorized", message: "sign in or continue as a guest" });
@@ -246,9 +257,35 @@ try {
   process.exit(1);
 }
 
+const DRAIN_TIMEOUT_MS = Number(process.env.DRAIN_TIMEOUT_MS ?? 60_000);
+
+let shuttingDown = false;
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {
+    // Kubernetes can send SIGTERM more than once; a second one must not
+    // restart the drain or race the first to process.exit().
+    if (shuttingDown) return;
+    shuttingDown = true;
     app.log.info({ signal }, "shutting down");
+
+    await drain({
+      timeoutMs: DRAIN_TIMEOUT_MS,
+      pollMs: 500,
+      playersInMatches: () => arena.playersInMatches(),
+      matchesOwnedHere: () => arena.matchesOwnedHere(),
+      clearQueue: () => arena.clearLocalQueueTickets(),
+      endAll: () => arena.endAllForShutdown(),
+      log: (msg, extra) => app.log.info(extra ?? {}, msg),
+    });
+
+    // Give the final `end` messages a moment to actually leave the socket.
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Wait for result writes before closing the pool. Ending a match schedules
+    // an INSERT; exiting underneath it loses a match that was really played.
+    const flushed = await arena.flushPendingWrites(5000);
+    if (flushed) app.log.info({ pendingWrites: flushed }, "draining: flushed match results");
+
     arena.stopWatchdog();
     await stopPresence();
     await stopBus();

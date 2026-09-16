@@ -19,3 +19,7 @@ data:
   POSTGRES_DB: "pong"
   POSTGRES_POOL_MAX: "10"
   JWT_TTL: "24h"
+  # How long a terminating Pod waits for its in-flight matches to finish before
+  # ending them. Must fit inside terminationGracePeriodSeconds along with the
+  # preStop sleep - see k8s/01-deployment.yaml.
+  DRAIN_TIMEOUT_MS: "60000"

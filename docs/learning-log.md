@@ -1475,3 +1475,67 @@ hpa      game-server cpu           <- now created automatically
 
 One transient `auth` failure was seen in the first containerised run and could
 not be reproduced in 10 subsequent runs. Recorded rather than explained away.
+
+## Graceful match draining
+
+Full write-up: [docs/graceful-shutdown.md](graceful-shutdown.md).
+
+The last real correctness gap. `preStop` (Phase 16) stopped *HTTP requests*
+being lost during termination; it did nothing for matches already being played.
+
+The sequence on SIGTERM: mark draining so `/ready` returns 503 and the Service
+removes the Pod; refuse new joins; pull our queued players out of the shared
+queue; wait for in-flight matches to finish; end anything left at the deadline
+with `server_draining` - still writing the result.
+
+### Measured in the cluster
+
+A Pod running three matches, deleted while people were playing:
+
+```
+before SIGTERM:  {"games":3,"playersInMatches":4,"draining":false}
+draining: no longer accepting new matches  {playersInMatches: 3, matchesOwnedHere: 3}
+draining: all matches finished             {waitedMs: 25574}
+```
+
+And a full rolling restart under live load:
+
+```
+  t+10s   running=2  terminating=3  games=14
+  t+50s   running=2  terminating=1  games=19
+  t+60s   running=2  terminating=0  games=21
+```
+
+Terminating Pods stayed up ~50 s and the active-game count kept **rising**. Old
+Pods finished their matches while new ones took the new traffic.
+
+### The time budget is silent when wrong
+
+`terminationGracePeriodSeconds` has to cover the whole sequence, because
+Kubernetes SIGKILLs at that deadline regardless:
+
+```
+preStop 8s + drain 60s + flush 5s + margin 27s = 100s
+```
+
+Too small and the Pod is killed mid-drain - precisely the behaviour draining was
+added to prevent, and nothing logs a complaint.
+
+### A bug the deadline test found
+
+At the deadline the players were correctly told the match had ended - and the
+match was not in the database. `recordMatch()` is fire-and-forget, which is fine
+during play; at shutdown the process closed the connection pool and exited while
+the INSERT was still in flight.
+
+The Arena now tracks pending writes and the drain awaits them.
+
+### A test that could not have passed
+
+That same test originally used **guests**, and its "still recorded" assertion
+failed. Guest matches are deliberately never persisted, so a guest match could
+never test persistence at all - the system was right and the test was asking an
+impossible question. Rewritten to use real accounts.
+
+Third time this project has hit a version of the same lesson, and worth stating
+plainly: **when a test fails, the test is a suspect too.**

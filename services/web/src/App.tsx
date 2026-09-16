@@ -128,9 +128,13 @@ export default function App() {
               </p>
             )}
 
+            {g.notice && <p className="hint">{g.notice}</p>}
+
             {g.status === "finished" && g.result && (
               <p className={iWon ? "good" : "bad"}>
-                {g.result.reason === "server_lost"
+                {g.result.reason === "server_draining"
+                  ? "That server was shut down mid-match. The result was still recorded."
+                  : g.result.reason === "server_lost"
                   ? "The server running this match became unavailable. No result was recorded."
                   : <>
                       {g.result.reason === "opponent_left" ? "Opponent left. " : ""}

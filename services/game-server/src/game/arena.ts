@@ -56,6 +56,28 @@ export class Arena {
   private stopHeartbeat: (() => void) | null = null;
 
   /**
+   * Match results still being written to PostgreSQL.
+   *
+   * recordMatch() is fire-and-forget during normal play, which is fine. During
+   * SHUTDOWN it is not: the process would close the connection pool and exit
+   * while the INSERT was still in flight, and a match that was genuinely played
+   * would vanish. Found by the drain-deadline test, which saw the players
+   * correctly told the match had ended and then found no row for it.
+   */
+  private pendingWrites = new Set<Promise<unknown>>();
+
+  /** Wait for in-flight result writes before the pool is closed. */
+  async flushPendingWrites(timeoutMs = 5000): Promise<number> {
+    const n = this.pendingWrites.size;
+    if (n === 0) return 0;
+    await Promise.race([
+      Promise.allSettled([...this.pendingWrites]),
+      new Promise((r) => setTimeout(r, timeoutMs)),
+    ]);
+    return n;
+  }
+
+  /**
    * Start the room heartbeat. Rooms we own get a refreshed TTL key; rooms we
    * merely relay for are checked, and if the owner has gone silent we end the
    * match locally rather than leaving our player staring at a frozen board.
@@ -121,6 +143,70 @@ export class Arena {
     return redis.llen(QUEUE_KEY);
   }
 
+  /**
+   * How many local players are currently mid-match - whether this Pod owns the
+   * simulation or is only relaying for it. Both count: a relayed player whose
+   * socket we close is just as disconnected as one of our own.
+   */
+  playersInMatches(): number {
+    let n = 0;
+    for (const c of this.local.values()) {
+      if (c.room?.state.phase === "playing") n++;
+      else if (c.remote) n++;
+    }
+    return n;
+  }
+
+  /** Matches this Pod is actually simulating. */
+  matchesOwnedHere(): number {
+    return [...this.rooms.values()].filter((r) => r.state.phase === "playing").length;
+  }
+
+  /**
+   * Shutdown deadline reached with matches still running. End them honestly
+   * rather than letting the sockets die silently: a player who is told can
+   * requeue immediately, and the owner still writes the result.
+   */
+  endAllForShutdown(): number {
+    let ended = 0;
+
+    // Rooms we own: finish them properly so the result is still persisted.
+    for (const room of this.rooms.values()) {
+      if (room.state.phase !== "playing") continue;
+      room.abandonForShutdown();
+      ended++;
+    }
+
+    // Players we were only relaying for: their match lives on another Pod and
+    // will carry on without them, so just tell them why they are leaving.
+    for (const conn of this.local.values()) {
+      if (!conn.remote) continue;
+      conn.send({
+        t: "end",
+        winner: null,
+        reason: "server_draining",
+        message: "this server is shutting down - start a new match",
+      });
+    }
+
+    return ended;
+  }
+
+  /** Remove every queued local player, so nobody is matched into a dying Pod. */
+  async clearLocalQueueTickets(): Promise<void> {
+    for (const conn of this.local.values()) {
+      if (conn.ticket) {
+        await redis.lrem(QUEUE_KEY, 1, conn.ticket).catch(() => {});
+        conn.ticket = null;
+        conn.send({ t: "requeue", reason: "this server is shutting down" });
+      }
+      if (conn.inviteCode) {
+        await cancelInvite(conn.inviteCode).catch(() => {});
+        conn.inviteCode = null;
+      }
+    }
+  }
+
   async join(conn: Conn): Promise<void> {
     const ticket = this.ticketFor(conn);
     const raw = JSON.stringify(ticket);
@@ -167,7 +253,9 @@ export class Arena {
         void clearBeat(result.roomId);
         matchesCompleted.inc({ reason: result.endReason });
         matchDuration.observe((result.endedAt.getTime() - result.startedAt.getTime()) / 1000);
-        recordMatch(result).catch((e) => this.onPersistError(e, result.roomId));
+        const write = recordMatch(result).catch((e) => this.onPersistError(e, result.roomId));
+        this.pendingWrites.add(write);
+        void write.finally(() => this.pendingWrites.delete(write));
       }
     );
     this.rooms.set(room.id, room);
