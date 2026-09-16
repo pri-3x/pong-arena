@@ -1,0 +1,48 @@
+# Values for prometheus-community/prometheus-adapter.
+#
+# The adapter implements the custom.metrics.k8s.io API. Once registered, an HPA
+# can ask Kubernetes for "pong_active_games" exactly the way it asks for CPU -
+# the HPA itself needs no knowledge of Prometheus.
+prometheus:
+  url: http://prometheus.monitoring.svc.cluster.local
+  port: 9090
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits:   { cpu: 250m, memory: 384Mi }
+
+rules:
+  # Drop the built-in CPU/memory rules. metrics-server already serves those on
+  # the resource metrics API, and having two sources for the same numbers is a
+  # good way to confuse yourself later.
+  default: false
+
+  custom:
+    # seriesQuery selects which Prometheus series this rule covers.
+    # The label filters matter: a series with no namespace or pod cannot be
+    # associated with a Kubernetes object, and the adapter will skip it.
+    - seriesQuery: '{__name__=~"pong_active_games|pong_connected_players|pong_matchmaking_queue_length",namespace!="",kubernetes_pod!=""}'
+
+      # resources maps Prometheus LABELS to Kubernetes RESOURCES. This is the
+      # part that lets an HPA on a Deployment find the metrics for its Pods.
+      #
+      # We scrape with `kubernetes_pod` carrying the Pod name (the plain `pod`
+      # label is our own, set from the downward API, and happens to match - but
+      # naming the scrape-time label here keeps the mapping explicit).
+      resources:
+        overrides:
+          namespace:      { resource: namespace }
+          kubernetes_pod: { resource: pod }
+
+      # Expose each metric under its own name, unchanged.
+      name:
+        matches: "^(.*)$"
+        as: "${1}"
+
+      # How to actually compute a value for a set of objects. <<.Series>>,
+      # <<.LabelMatchers>> and <<.GroupBy>> are filled in by the adapter.
+      #
+      # sum(), not avg(): this returns the value PER POD, and the HPA's
+      # AverageValue target then averages across pods itself. Averaging here as
+      # well would average twice and quietly halve the signal.
+      metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'

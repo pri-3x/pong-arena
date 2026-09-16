@@ -68,6 +68,7 @@ To try it solo, open two browser tabs. That works because the token is kept in
 | Play | <http://localhost> |
 | Grafana dashboard | <http://localhost/grafana> |
 | Failure tests | `./scripts/chaos.sh` |
+| Scale on active games, not CPU | `./scripts/enable-custom-metrics.sh` (needs Helm) |
 | Remove everything | `./scripts/teardown.sh` |
 
 ## What it looks like
@@ -269,6 +270,7 @@ MIT - see [LICENSE](LICENSE).
 - [Database schema](docs/database-schema.md)
 - [Configuration and secrets](docs/configuration.md)
 - [Persistent storage](docs/storage.md)
+- [Custom-metric autoscaling](docs/custom-metrics.md)
 - [Architecture](docs/architecture.md)
 - [Observability](docs/observability.md)
 - [Load testing results](docs/load-testing.md)

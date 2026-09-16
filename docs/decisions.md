@@ -387,3 +387,26 @@ server crash-looped on `password authentication failed` forever. Measured
 directly during a teardown/bootstrap cycle.
 **Also:** `bootstrap.sh` now detects an existing PVC with no Secret and stops
 with both remedies spelled out, rather than deploying something that cannot work.
+
+## ADR-041: autoscale on active games via prometheus-adapter, keeping CPU
+**Decision:** install `prometheus-adapter` to serve `pong_active_games` on the
+`custom.metrics.k8s.io` API, and list BOTH cpu and the game count in the HPA.
+**Why:** CPU is a proxy - a Pod holding 200 idle WebSocket connections looks
+idle while being near capacity. This closes the gap recorded in ADR-024.
+Keeping CPU costs nothing (an HPA takes the highest recommendation across
+metrics) and covers workloads that are expensive but not match-shaped. It is
+also the fallback if the adapter stops serving.
+**Measured:** with the CPU target raised to 300% so only games could trigger
+scaling, load drove 1 → 2 → 4 → 7 Pods and games-per-Pod converged from 11 to
+3.5 against a target of 3.
+**Detail:** the adapter's `metricsQuery` uses `sum()`, not `avg()`. It returns
+the value per Pod and the HPA's `AverageValue` target averages across Pods -
+averaging in both places would halve the signal.
+**Kept optional:** it requires Helm, and `bootstrap.sh` should stay installable
+with only docker and kubectl. `scripts/enable-custom-metrics.sh` adds it.
+
+## ADR-042: prometheus-adapter default rules disabled
+**Decision:** `rules.default: false` in the adapter values.
+**Why:** the built-in rules expose CPU and memory, which metrics-server already
+serves on the resource metrics API. Two sources for the same numbers is a good
+way to confuse yourself when an HPA behaves unexpectedly.

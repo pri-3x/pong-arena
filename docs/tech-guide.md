@@ -735,13 +735,31 @@ t+56s  pods=6  players=29  games=15
 t+84s  pods=8  players=41  games=19    ← maxReplicas reached
 ```
 
-### Why CPU is the wrong metric here (and we used it anyway)
+### Why CPU is the wrong metric here - and what replaced it
 
 CPU correlates with load in this app because the 60Hz simulation loop is
 CPU-bound. But a Pod holding 200 *idle* WebSocket connections uses almost no CPU
-while being near its real capacity. The honest signal is `active_games` or
-`connected_players` - both already exported at `/metrics`. Driving an HPA from
-them needs Prometheus Adapter or KEDA.
+while being near its real capacity. The honest signal is `active_games`.
+
+That is now implemented. `prometheus-adapter` serves `pong_active_games` through
+the `custom.metrics.k8s.io` API, so the HPA asks Kubernetes for it exactly the
+way it asks for CPU - **the HPA never learns that Prometheus exists.**
+
+The HPA lists *both* metrics and takes whichever recommends more replicas, so
+CPU still protects against a workload that is expensive but not match-shaped.
+
+Measured with the CPU target deliberately raised to 300% so only games could
+trigger scaling:
+
+```
+  t+48s    cpu 99%/300%    games/pod 11     pods 1
+  t+96s    cpu 142%/300%   games/pod 4.75   pods 4
+  t+120s   cpu 107%/300%   games/pod 3.5    pods 7    <- converged on target 3
+```
+
+CPU never reached its target, so its recommendation stayed at one Pod; the
+1 → 2 → 4 → 7 scale-up was driven entirely by active games. Full write-up:
+[docs/custom-metrics.md](custom-metrics.md).
 
 ### Try it
 

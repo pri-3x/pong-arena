@@ -1,0 +1,47 @@
+# Autoscaling on an APPLICATION metric, not just CPU.
+#
+# Why this exists (see ADR-024): CPU is a proxy here. It correlates with load
+# because the 60Hz simulation loop is CPU-bound, but a Pod holding 200 idle
+# WebSocket connections uses almost no CPU while being close to its real
+# capacity. "How many matches am I simulating" is the honest signal.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: game-server
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: game-server
+  minReplicas: 1
+  maxReplicas: 8
+
+  # BOTH metrics are listed. The HPA computes a desired replica count for each
+  # and takes the HIGHEST. So CPU still protects us from a workload that is
+  # expensive but not match-shaped, while active games drive normal scaling.
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+
+    - type: Pods
+      pods:
+        metric:
+          name: pong_active_games
+        target:
+          # Average across pods: aim for ~3 concurrent matches per pod.
+          # 12 active games -> 4 pods.
+          type: AverageValue
+          averageValue: "3"
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 30 }]
+    scaleDown:
+      # Slow, because removing a Pod drops the WebSocket connections it holds.
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
