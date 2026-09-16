@@ -10,9 +10,21 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Apply EVERY manifest in k8s/, rather than a hardcoded list.
+#
+# This used to name each file explicitly, and silently stopped applying the
+# Ingress and the HPA when those were added in Phases 10 and 13 - the cluster
+# only had them because they had been applied by hand. A fresh install got an
+# unreachable app with no autoscaling.
+#
+# The ConfigMap goes first so anything referencing it resolves.
 kubectl apply -f k8s/00-config.yaml
-kubectl apply -f k8s/01-deployment.yaml -f k8s/02-service.yaml -f k8s/03-web.yaml \
-               -f k8s/04-redis.yaml -f k8s/05-postgres.yaml
+for f in k8s/*.yaml; do
+  case "$(basename "$f")" in
+    00-config.yaml|secret.example.yaml) continue ;;
+  esac
+  kubectl apply -f "$f"
+done
 
 CONFIG_SUM=$(kubectl get configmap pong-config -o jsonpath='{.data}' | shasum -a 256 | cut -c1-16)
 SECRET_SUM=$(kubectl get secret pong-secrets -o jsonpath='{.data}' | shasum -a 256 | cut -c1-16)

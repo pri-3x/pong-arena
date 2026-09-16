@@ -367,3 +367,23 @@ used by both paths.
 `send` wiring are all subtle and all easy to get half-right. Duplicating them
 for invites would have meant a second place to forget the first heartbeat -
 which is exactly the bug that had already shipped once.
+
+## ADR-039: apply.sh applies every manifest, not a hardcoded list
+**Decision:** `scripts/apply.sh` loops over `k8s/*.yaml` instead of naming files.
+**Why:** the hardcoded list was written in Phase 9 and silently stopped covering
+`06-ingress.yaml` and `07-hpa.yaml` when those were added in Phases 10 and 13.
+The running cluster only had them because they had been applied by hand, so the
+bug was invisible until a genuinely cold bootstrap - which produced an
+unreachable app with no autoscaling.
+**Lesson:** a list of files that must be kept in sync with a directory will
+eventually drift. Iterate the directory.
+
+## ADR-040: teardown keeps the Secret and the PVC together
+**Decision:** `teardown.sh` keeps both by default; `--purge` deletes both.
+**Why:** PostgreSQL only reads `POSTGRES_PASSWORD` when initialising an EMPTY
+data directory. Deleting the Secret while keeping the volume meant the next
+bootstrap generated a new password, PostgreSQL kept the old one, and the game
+server crash-looped on `password authentication failed` forever. Measured
+directly during a teardown/bootstrap cycle.
+**Also:** `bootstrap.sh` now detects an existing PVC with no Secret and stops
+with both remedies spelled out, rather than deploying something that cannot work.

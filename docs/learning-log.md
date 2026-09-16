@@ -1410,3 +1410,68 @@ Two lessons, both already themes of this project:
 2. **A regression test must be shown to fail.** This one was run against a build
    with the fix removed before being trusted. A regression test that has never
    been red is an assumption wearing a test's clothes.
+
+## Verifying the "clone and run" promise
+
+The README promises `git clone && ./scripts/bootstrap.sh`. That had only ever
+been tested as an *idempotent re-run against an already-working cluster*, which
+is a much weaker claim. Running the real path - teardown to nothing, then
+bootstrap - found two genuine bugs.
+
+### 1. apply.sh had silently stopped applying half the manifests
+
+It named each file explicitly, and that list was written in Phase 9. When the
+Ingress (Phase 10) and HPA (Phase 13) were added, they were applied by hand and
+the list was never updated. The cluster had them, so nothing looked wrong.
+
+A cold bootstrap produced a stack with **no Ingress and no HPA** - the app was
+unreachable (`404` from the ingress default backend) and could not autoscale.
+
+Fixed by iterating `k8s/*.yaml`. A hardcoded list that must track a directory
+will drift eventually.
+
+### 2. Teardown kept the volume but deleted the password
+
+`teardown.sh` deliberately kept the database PVC - the right instinct. But it
+also deleted the Secret. So the next bootstrap generated a *new* password, while
+PostgreSQL skipped `initdb` (the data directory already existed) and kept the
+*old* one:
+
+```
+game-server  CrashLoopBackOff  ...  auth.c:331  auth_failed
+```
+
+This is exactly the Phase 8 subtlety - *rotating POSTGRES_PASSWORD does not
+change an existing database's password* - reappearing somewhere new. Knowing a
+fact does not stop you building a system that violates it.
+
+Fixed two ways: teardown now keeps the Secret and the PVC **together** (with
+`--purge` to drop both), and bootstrap detects a PVC with no Secret and stops
+with both remedies printed, instead of deploying something that cannot work.
+
+### 3. My own simulation lied
+
+The CI simulation ran each suite as `cmd | tail -2`. A pipeline exits with the
+status of the **last** command, so `tail` succeeding masked a failing test - the
+run reported `rc=0` with a visible `1 FAILED` in its own output.
+
+The real workflow does not pipe, so GitHub Actions would have caught it. But it
+is the same trap this project keeps hitting, this time in the harness rather
+than the code.
+
+### Result
+
+After the fixes, a genuinely cold bootstrap on an empty cluster:
+
+```
+==> Deploying Pong Arena     ok postgres, redis, web, game-server
+==> Deploying monitoring     ok prometheus, grafana
+==> Verifying                ok /ready -> {"ok":true,...}
+BOOTSTRAP_DONE rc=0
+
+ingress  pong  pong.local          <- now created automatically
+hpa      game-server cpu           <- now created automatically
+```
+
+One transient `auth` failure was seen in the first containerised run and could
+not be reproduced in 10 subsequent runs. Recorded rather than explained away.

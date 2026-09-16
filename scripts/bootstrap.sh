@@ -65,19 +65,50 @@ fi
 
 # ---------------------------------------------------------------- secrets
 step "Creating secrets"
-if kubectl get secret pong-secrets >/dev/null 2>&1; then
-  ok "pong-secrets already exists (delete it to rotate, or run scripts/create-secrets.sh)"
+HAVE_SECRET=false; kubectl get secret pong-secrets >/dev/null 2>&1 && HAVE_SECRET=true
+HAVE_PVC=false;    kubectl get pvc data-postgres-0  >/dev/null 2>&1 && HAVE_PVC=true
+
+if $HAVE_SECRET; then
+  ok "pong-secrets already exists (run scripts/create-secrets.sh to rotate)"
+elif $HAVE_PVC; then
+  # PostgreSQL only reads POSTGRES_PASSWORD when it initialises an EMPTY data
+  # directory. An existing volume keeps its old password, so generating a new
+  # secret here would leave the game server crash-looping on auth failure.
+  warn "found an existing database volume (data-postgres-0) but no pong-secrets."
+  warn "PostgreSQL will keep the password baked into that volume, so a freshly"
+  warn "generated secret would not match and the game server would crash-loop."
+  echo
+  echo "  Either keep the data and set the secret to the password it already has:"
+  echo "    POSTGRES_PASSWORD=<the old password> ./scripts/create-secrets.sh"
+  echo
+  echo "  Or start clean (this DELETES the database):"
+  echo "    kubectl delete pvc data-postgres-0 && ./scripts/bootstrap.sh"
+  exit 1
 else
   ./scripts/create-secrets.sh >/dev/null && ok "pong-secrets generated"
 fi
 
 # ---------------------------------------------------------------- app
 step "Deploying Pong Arena"
-./scripts/apply.sh >/dev/null 2>&1
-kubectl rollout status statefulset/postgres --timeout=300s >/dev/null 2>&1 && ok "postgres"
-kubectl rollout status deployment/redis       --timeout=180s >/dev/null 2>&1 && ok "redis"
-kubectl rollout status deployment/game-server --timeout=300s >/dev/null 2>&1 && ok "game-server"
-kubectl rollout status deployment/web         --timeout=180s >/dev/null 2>&1 && ok "web"
+./scripts/apply.sh >/dev/null 2>&1 || true
+
+# Report each rollout honestly rather than silently swallowing a failure and
+# leaving the script to hang on the next one.
+roll() {
+  local kind=$1 name=$2 secs=$3
+  if kubectl rollout status "$kind/$name" --timeout="${secs}s" >/dev/null 2>&1; then
+    ok "$name"
+  else
+    warn "$name did not become ready"
+    kubectl get pods -l app="$name" --no-headers 2>/dev/null | sed "s/^/       /"
+    kubectl logs "$kind/$name" --tail=5 2>/dev/null | sed "s/^/       /"
+    return 1
+  fi
+}
+roll statefulset postgres    300
+roll deployment  redis       180
+roll deployment  web         180
+roll deployment  game-server 300 || die "the game server could not start - see the logs above"
 
 # ---------------------------------------------------------------- monitoring
 step "Deploying monitoring"
