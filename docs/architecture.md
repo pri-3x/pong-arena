@@ -109,5 +109,7 @@ requeue. A user account cannot.
   another Pod is a much larger problem and is not attempted.
 - A Pod that is SIGKILLed or whose node vanishes cannot drain. That case is
   covered by the room heartbeat, which tells the surviving player `server_lost`.
-- CPU is a proxy metric for autoscaling. `active_games` would be the honest
-  signal; see ADR-024.
+- Autoscaling on `active_games` is **optional** (it needs Helm, see
+  [custom-metrics.md](custom-metrics.md)). Without it the HPA falls back to CPU,
+  which is a proxy: a Pod holding 200 idle connections looks idle while being
+  near capacity.
