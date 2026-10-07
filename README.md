@@ -79,6 +79,53 @@ To try it solo, open two browser tabs. That works because the token is kept in
 
 The game is deliberately plain - the interesting part is underneath it.
 
+### Signing in
+
+Create an account, or skip it and play as a guest. Guest matches work exactly
+the same; they just are not written to history or the leaderboard:
+
+![Sign in, create an account, or play as a guest](docs/images/sign-in.png)
+
+### Finding a match
+
+The matchmaking queue lives in Redis, not in one pod's memory. That is the
+whole reason two players who land on different replicas can still meet:
+
+![Waiting for an opponent](docs/images/matchmaking.png)
+
+### Playing
+
+The same match from each player's own screen. The server owns the ball, the
+collisions and the score - each client only ever sends its paddle direction,
+so a tampered client cannot cheat.
+
+Note the header on both: the pod name that answered, and the same room id.
+
+![The left player's screen](docs/images/match-left-player.png)
+
+![The right player's screen, same room](docs/images/match-right-player.png)
+
+### After the match
+
+First to five. The result is written to PostgreSQL in a single transaction by
+whichever pod was running the simulation, so a match can never be recorded
+twice:
+
+![Match result, with options to play again or open a private match](docs/images/match-result.png)
+
+### Leaderboard and history
+
+![Leaderboard](docs/images/leaderboard.png)
+
+![Your match history](docs/images/match-history.png)
+
+The `bot_*` accounts near the top of the leaderboard are not filler - they are
+real rows left behind by the k6 load tests. Forty simulated players grinding
+through matches shows up in the standings.
+
+Abandoned matches appear in history but are excluded from the leaderboard, so
+quitting a losing game cannot be farmed for wins.
+
 ### The dashboard
 
 Every panel is provisioned from git and driven by metrics the game server
