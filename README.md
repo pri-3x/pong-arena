@@ -278,6 +278,4 @@ MIT - see [LICENSE](LICENSE).
 - [Observability](docs/observability.md)
 - [Load testing results](docs/load-testing.md)
 - [Chaos / failure testing](docs/failure-testing.md)
-- [Resume bullets](docs/resume.md)
-- [Portfolio page](docs/portfolio.html)
 - [Architecture decisions](docs/decisions.md)
