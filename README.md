@@ -11,6 +11,8 @@ course rather than a finished codebase.
 
 ![MIT licensed](https://img.shields.io/badge/license-MIT-blue) ![Kubernetes](https://img.shields.io/badge/kubernetes-1.34-blue) ![Node](https://img.shields.io/badge/node-20-green) ![CI](https://github.com/pri-3x/pong-arena/actions/workflows/ci.yml/badge.svg)
 
+![A live two-player match](docs/images/gameplay.png)
+
 > ### New here? Read [**the tech guide**](docs/tech-guide.md).
 >
 > Every technology in this project explained in depth - Docker, Kubernetes,
@@ -75,14 +77,32 @@ To try it solo, open two browser tabs. That works because the token is kept in
 
 ## What it looks like
 
-The game is deliberately plain - the interesting part is underneath it. Once
-running, three things are worth opening:
+The game is deliberately plain - the interesting part is underneath it.
 
-| | |
-|---|---|
-| **The game** | two browser tabs at <http://localhost>, playing a real cross-Pod match |
-| **The dashboard** | <http://localhost/grafana> - players, matches, replicas, latency, queue depth |
-| **The cluster** | `kubectl get pods -w` while `./scripts/chaos.sh` breaks things |
+### The dashboard
+
+Every panel is provisioned from git and driven by metrics the game server
+exports. This is a real capture during a k6 load test - 17 concurrent matches,
+39 players, and the HPA having scaled to 4 replicas:
+
+![The Grafana dashboard under load](docs/images/grafana.png)
+
+"Replicas vs load" is the one worth looking at twice: the replica count steps up
+behind the match count, because that is the HPA reacting to a metric the
+application itself reports.
+
+### Private matches
+
+Create a match, send a friend the code or the link:
+
+![Creating a private match](docs/images/private-match.png)
+
+### And the cluster
+
+```bash
+kubectl get pods -w        # in one terminal
+./scripts/chaos.sh         # in another
+```
 
 ## Learning path
 
